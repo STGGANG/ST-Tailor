@@ -1,0 +1,9 @@
+{
+    "display_name": "ST 재단사",
+    "loading_order": 100,
+    "js": "index.js",
+    "author": "STGGANG",
+    "version": "1.9.26",
+    "auto_update": false,
+    "homePage": "https://github.com/STGGANG/ST-Tailor"
+}
