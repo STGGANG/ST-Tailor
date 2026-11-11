@@ -1,4 +1,4 @@
-/* ST Tailor 1.9.37 */
+/* ST Tailor 1.9.40 */
 (() => {
   'use strict';
   // The script build runs inside Tavern Helper's iframe, so the real page is the parent window; the extension build runs in that window directly.
@@ -6,7 +6,7 @@
   const doc = host.document;
   const GLOBAL = '__ST_TAILOR__';
   const STORAGE = 'st_tailor_v1';
-  const VERSION = "1.9.37";
+  const VERSION = "1.9.40";
   const IN_JSDOM = /jsdom/i.test(window.navigator?.userAgent || '');
   // Search only inside #chat, not the whole document: this runs on every DOM change, so keep it cheap.
   function welcomePanel() { return doc.getElementById('chat')?.getElementsByClassName('welcomePanel')[0] || null; }
@@ -395,6 +395,10 @@
   const FONT_PANEL_CSS = `
 #stt-panel#stt-panel#stt-panel .stt-font-slider { display: grid !important; grid-template-columns: 3.6em minmax(0, 1fr) 6.4em 30px !important; align-items: center !important; gap: 10px !important; margin: 8px 0 0 !important; }
 #stt-panel#stt-panel#stt-panel .stt-font-value { font-size: .86em !important; opacity: .8 !important; text-align: right !important; white-space: nowrap !important; }
+#stt-panel#stt-panel#stt-panel .stt-font-value.stt-font-number { display: inline-flex !important; align-items: center !important; justify-content: flex-end !important; gap: 3px !important; opacity: 1 !important; }
+#stt-panel#stt-panel#stt-panel .stt-font-slider > .stt-font-number > input[type="number"][type="number"] { -moz-appearance: textfield !important; appearance: textfield !important; width: 4.2em !important; min-width: 0 !important; height: 30px !important; min-height: 30px !important; padding: 0 6px !important; border-radius: 8px !important; font-size: 1em !important; font-variant-numeric: tabular-nums !important; text-align: right !important; }
+#stt-panel#stt-panel#stt-panel .stt-font-unit { flex: none !important; width: 1.6em !important; text-align: left !important; }
+#stt-panel#stt-panel#stt-panel .stt-font-number > input::-webkit-inner-spin-button, #stt-panel#stt-panel#stt-panel .stt-font-number > input::-webkit-outer-spin-button { -webkit-appearance: none !important; margin: 0 !important; }
 #stt-panel#stt-panel#stt-panel .stt-font-slider > button { width: 30px !important; height: 30px !important; min-width: 30px !important; min-height: 30px !important; padding: 0 !important; border-color: transparent !important; background: transparent !important; color: var(--stt-muted) !important; display: inline-flex !important; align-items: center !important; justify-content: center !important; }
 #stt-panel#stt-panel#stt-panel .stt-font-register { display: grid !important; grid-template-columns: minmax(0, 1fr) auto !important; gap: 8px !important; align-items: center !important; margin: 10px 0 0 !important; }
 #stt-panel#stt-panel#stt-panel .stt-font-code { display: block !important; width: 100% !important; min-height: 68px !important; margin: 8px 0 0 !important; padding: 8px 10px !important; resize: vertical !important; color: inherit !important; border: 1px solid var(--stt-border) !important; border-radius: 10px !important; background: var(--stt-wash) !important; box-shadow: none !important; font-family: ui-monospace, monospace !important; font-size: 12px !important; box-sizing: border-box !important; }
@@ -421,7 +425,7 @@
 #stt-panel#stt-panel#stt-panel button.stt-font-langs-toggle[aria-expanded="true"]::after { transform: rotate(45deg) translate(-2px, -2px) !important; }
 #stt-panel#stt-panel#stt-panel button.stt-font-langs-toggle:is(:hover, :focus-visible) { background: var(--stt-wash2) !important; }
 #stt-panel#stt-panel#stt-panel .stt-font-langs-body { padding: 8px 0 0 !important; }
-#stt-panel#stt-panel#stt-panel .stt-home-cols .stt-font-slider { grid-template-columns: 4.8em minmax(0, 1fr) 4.2em 30px !important; }
+#stt-panel#stt-panel#stt-panel .stt-home-cols .stt-font-slider { grid-template-columns: 4.8em minmax(0, 1fr) 6.4em 30px !important; }
 #stt-panel#stt-panel#stt-panel .stt-icon-blank::before { content: "" !important; display: block !important; width: .8em !important; height: .8em !important; border: 1.5px dashed var(--stt-faint) !important; border-radius: 4px !important; opacity: .7 !important; }
 #stt-panel#stt-panel#stt-panel .stt-sub { margin: 4px 0 2px 2px !important; padding: 0 0 0 14px !important; border-left: 2px solid var(--stt-border) !important; }
 #stt-panel#stt-panel#stt-panel .stt-home-cols { display: grid !important; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) !important; gap: 0 36px !important; align-items: start !important; }
@@ -495,11 +499,13 @@
       const bodySize = parseFloat(body.fontSize) || 14;
       const chat = sample ? host.getComputedStyle(sample) : null;
       const chatSize = chat ? parseFloat(chat.fontSize) || bodySize : null;
+      const input = doc.getElementById('send_textarea');
       base = {
         uiFamily: quoteFamilies(body.fontFamily), chatFamily: quoteFamilies(chat?.fontFamily || body.fontFamily),
         fontScale: parseFloat(host.getComputedStyle(doc.documentElement).getPropertyValue('--fontScale')) || 1,
         bodyLine: px(body.lineHeight, bodySize),
         chatSize, chatLine: chat ? px(chat.lineHeight, chatSize) : null,
+        inputSize: input ? parseFloat(host.getComputedStyle(input).fontSize) || null : null,
       };
       if (style) style.disabled = !!was;
       baseKey = key;
@@ -680,13 +686,20 @@
       marker.observe(chat, { childList: true, subtree: true, characterData: true });
     }
 
+    // Elsewhere SillyTavern fits the input's height only while typing; refit after a font change (and once more
+    // shortly after, in case its listener wasn't attached yet at startup).
+    const refitInput = () => {
+      const fit = () => doc.getElementById('send_textarea')?.dispatchEvent(new host.Event('input'));
+      fit();
+      host.setTimeout(fit, 1500);
+    };
     function sync(config) {
       lastConfig = config;
       const ui = config?.ui || fontDefaults(), chat = config?.chat || fontDefaults();
       const marks = (config?.marks || []).filter(markUsed);
       syncMarks(marks.length ? planMarks(marks) : null);
       const used = marks.length || [ui, chat].some(g => g.family || langsUsed(g) || g.size !== 100 || g.lineHeight !== 100 || g.stroke !== null || g.spacing !== null);
-      if (!used) { if (style) { style.remove(); style = null; base = null; baseKey = ''; applied = ''; } return; }
+      if (!used) { if (style) { style.remove(); style = null; base = null; baseKey = ''; applied = ''; refitInput(); } return; }
       if (!style) {
         style = doc.createElement('style');
         style.id = 'stt-font-style';
@@ -722,6 +735,19 @@
         chat.stroke !== null && `-webkit-text-stroke-width: ${chat.stroke / 10}px !important`,
         chat.spacing !== null && `letter-spacing: ${chat.spacing / 100}em !important`,
       ]);
+      // The chat input is where messages are written, so it follows the message font: typeface, and size as the
+      // same ratio of the theme's input size (pinned like messages, so the UI scale no longer moves it).
+      // The doubled id outranks the UI catch-all rule above.
+      const inputSized = b.inputSize && (chat.size !== 100 || ui.size !== 100);
+      // SillyTavern's empty input has a fixed one-line height sized for the theme font; where the browser can size a
+      // textarea to its text, let it, so a larger font isn't clipped before the first keystroke.
+      if (inputSized) rules.push('@supports (field-sizing: content) { html body #send_textarea#send_textarea { height: auto !important; } }');
+      block('html body #send_textarea#send_textarea', [
+        inputSized && `font-size: ${round(b.inputSize * chat.size / 100)}px !important`,
+        chatFamily && `font-family: ${chatFamily} !important`,
+        chat.stroke !== null && `-webkit-text-stroke-width: ${chat.stroke / 10}px !important`,
+        chat.spacing !== null && `letter-spacing: ${chat.spacing / 100}em !important`,
+      ]);
       // Partial fonts share one specificity, so later rules win (user-rule text inside quotes follows the user rule).
       const scope = 'html body #chat#chat .mes :is(.mes_text, .mes_reasoning)';
       for (const mark of [...marks].sort((x, y) => !!x.open - !!y.open)) {
@@ -736,7 +762,10 @@
         if (mark.fade > 0) rules.push(`${scope} :where(${target}) { opacity: ${round((100 - mark.fade) / 100)} !important; }`);
       }
       const text = rules.join('\n');
-      if (text !== applied) { style.textContent = text; applied = text; }
+      if (text !== applied) {
+        style.textContent = text; applied = text;
+        refitInput();
+      }
     }
 
     return { sync, fontCss, stack, themeFamilies: () => measure(), dispose() { lastConfig = null; syncMarks(null); style?.remove(); style = null; base = null; baseKey = ''; applied = ''; } };
@@ -3244,6 +3273,32 @@
   const tip = text => ({ tip: text });
   // ⓘ opens a speech bubble on click/tap/Enter (never hover-only); one bubble at a time.
   // The bubble lives on the panel itself, so it is not clipped by scrolling cards.
+  // Number box beside a slider. Values are stored as integers; `scale` turns them into what is shown
+  // (stroke 3 → 0.3px). While typing only in-range numbers apply; Enter or leaving the box clamps the number,
+  // and an empty box goes back to the theme value when the setting allows that (otherwise to the last value).
+  function numberBox({ min, max, scale = 1, unit, label, current, nullable = false, onValue }) {
+    const digits = Math.round(Math.log10(scale));
+    const number = element('input', { type: 'number', min: min / scale, max: max / scale, step: 1 / scale, inputmode: digits ? 'decimal' : 'numeric', placeholder: nullable ? '테마' : '', 'aria-label': label });
+    const node = element('span', { class: 'stt-font-value stt-font-number' });
+    node.append(number, element('span', { class: 'stt-font-unit' }, unit));
+    const text = value => value === null || value === undefined ? '' : (value / scale).toFixed(digits);
+    const show = value => { if (doc.activeElement !== number) number.value = text(value); };
+    const take = commit => {
+      if (number.value === '') {
+        if (commit) { if (nullable && current() !== null) onValue(null); else number.value = text(current()); }
+        return;
+      }
+      const typed = Math.round(Number(number.value) * scale);
+      if (!Number.isFinite(typed)) { if (commit) number.value = text(current()); return; }
+      const next = Math.min(max, Math.max(min, typed));
+      if (commit) number.value = text(next);
+      if ((commit || next === typed) && next !== current()) onValue(next);
+    };
+    number.addEventListener('input', () => take(false));
+    number.addEventListener('change', () => take(true));
+    show(current());
+    return { node, show };
+  }
   function infoToggle(label, text) {
     const toggle = button('', event => {
       event.preventDefault(); event.stopPropagation();
@@ -3739,18 +3794,19 @@
     const clockFont = field('숫자 글꼴', select(fontOptions(), config.font, value => { config.font = value; clockSample.show(value); preview(); }, '시계 숫자 글꼴'));
     clockFont.append(clockSample.node);
     clockRight.append(clockFont);
-    const clockSlider = (key, title, min, max, step, fallback, unit) => {
+    const clockSlider = (key, title, min, max, fallback, unit) => {
       const row = element('div', { class: 'stt-font-slider' });
-      const range = element('input', { type: 'range', min, max, step, value: config[key], 'aria-label': `시계 ${title}` });
-      const shown = element('span', { class: 'stt-font-value' }, `${config[key]}${unit}`);
-      const sync = () => { shown.textContent = `${config[key]}${unit}`; range.style.setProperty('--stt-fill', `${(range.value - min) / (max - min) * 100}%`); reset.toggleAttribute('data-idle', config[key] === fallback); };
-      range.addEventListener('input', () => { config[key] = Number(range.value); sync(); preview(); });
-      const reset = button('↺', () => { config[key] = fallback; range.value = fallback; sync(); preview(); }, { 'aria-label': `시계 ${title} 되돌리기`, title: '기본값' });
+      const range = element('input', { type: 'range', min, max, step: 1, value: config[key], 'aria-label': `시계 ${title}` });
+      const set = next => { config[key] = next; range.value = next; sync(); preview(); };
+      const shown = numberBox({ min, max, unit, label: `시계 ${title} 직접 입력`, current: () => config[key], onValue: set });
+      const sync = () => { shown.show(config[key]); range.style.setProperty('--stt-fill', `${(range.value - min) / (max - min) * 100}%`); reset.toggleAttribute('data-idle', config[key] === fallback); };
+      range.addEventListener('input', () => set(Number(range.value)));
+      const reset = button('↺', () => set(fallback), { 'aria-label': `시계 ${title} 되돌리기`, title: '기본값' });
       sync();
-      row.append(element('span', {}, title), range, shown, reset);
+      row.append(element('span', {}, title), range, shown.node, reset);
       return row;
     };
-    clockRight.append(clockSlider('size', '크기', 50, 200, 5, 100, '%'), clockSlider('top', '위 여백', 0, 80, 2, 20, 'px'), clockSlider('bottom', '아래 여백', 0, 80, 2, 8, 'px'));
+    clockRight.append(clockSlider('size', '크기', 50, 200, 100, '%'), clockSlider('top', '위 여백', 0, 80, 20, 'px'), clockSlider('bottom', '아래 여백', 0, 80, 8, 'px'));
     syncClock();
     container.append(box);
     const side = element('section', { class: 'stt-common' });
@@ -3831,23 +3887,20 @@
       panel?.style.setProperty('--stt-ui-font', host.getComputedStyle(doc.body).fontFamily);
     };
     const families = fontOptions();
-    const show = {
-      size: v => `${v}%`, lineHeight: v => `${v}%`,
-      stroke: v => v === null ? '테마 그대로' : v === 0 ? '없음' : `${(v / 10).toFixed(1)}px`,
-      spacing: v => v === null ? '테마 그대로' : `${v > 0 ? '+' : ''}${(v / 100).toFixed(2)}em`,
-      fade: v => v ? `${v}%` : '그대로',
-    };
     const slider = (config, key, label, title, changed = () => {}) => {
       const [min, max] = FONT_LIMITS[key];
       const fallback = { ...markStyle(), ...fontDefaults() }[key];
       const row = element('div', { class: 'stt-font-slider' });
-      const range = element('input', { type: 'range', min, max, step: ['size', 'lineHeight', 'fade'].includes(key) ? 5 : 1, value: config[key] ?? (key === 'stroke' ? 0 : fallback ?? 0), 'aria-label': `${title} ${label}` });
-      const value = element('span', { class: 'stt-font-value' }, show[key](config[key]));
+      const range = element('input', { type: 'range', min, max, step: 1, value: config[key] ?? (key === 'stroke' ? 0 : fallback ?? 0), 'aria-label': `${title} ${label}` });
       const fill = () => range.style.setProperty('--stt-fill', `${(range.value - min) / (max - min) * 100}%`);
       fill();
       const idle = () => reset.toggleAttribute('data-idle', (config[key] ?? null) === (fallback ?? null));
-      const reset = button('↺', () => { config[key] = fallback; range.value = fallback ?? 0; fill(); value.textContent = show[key](fallback); idle(); preview(); changed(); }, { 'aria-label': `${title} ${label} 되돌리기`, title: '테마 그대로' });
-      range.addEventListener('input', () => { fill(); config[key] = Number(range.value); value.textContent = show[key](config[key]); idle(); preview(); changed(); });
+      const apply = next => { config[key] = next; range.value = next ?? 0; fill(); showValue(next); idle(); preview(); changed(); };
+      const scale = { stroke: 10, spacing: 100 }[key] || 1;
+      const unit = { stroke: 'px', spacing: 'em' }[key] || '%';
+      const { node: value, show: showValue } = numberBox({ min, max, scale, unit, label: `${title} ${label} 직접 입력`, current: () => config[key] ?? null, nullable: fallback === null, onValue: apply });
+      const reset = button('↺', () => apply(fallback), { 'aria-label': `${title} ${label} 되돌리기`, title: '테마 그대로' });
+      range.addEventListener('input', () => apply(Number(range.value)));
       idle();
       row.append(element('span', {}, label), range, value, reset);
       return row;
@@ -3856,7 +3909,9 @@
       const config = draft.fonts[group];
       const box = element('section', { class: 'stt-common' });
       const heading = element('div', { class: 'stt-common-heading' });
-      heading.append(element('h3', {}, title), actionButton(`${title} 초기화`, '↺', () => { draft.fonts[group] = fontDefaults(); preview(); renderPanelBody(); }, 'stt-reset'));
+      const headingTitle = element('h3', { class: 'stt-label-line' }, title);
+      if (group === 'chat') headingTitle.append(infoToggle(title, '채팅 메시지와 채팅 입력창 글자에 적용됩니다. 행간은 메시지에만 적용됩니다.'));
+      heading.append(headingTitle, actionButton(`${title} 초기화`, '↺', () => { draft.fonts[group] = fontDefaults(); preview(); renderPanelBody(); }, 'stt-reset'));
       box.append(heading);
       const sample = fontSample(config.family, '가나다라 마바사 · Aa Bb Cc 123 · あいう');
       const family = field('기본 글꼴', select(families, config.family, value => { config.family = value; sample.show(value); preview(); }, `${title} 기본 글꼴`));
