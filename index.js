@@ -1,4 +1,4 @@
-/* ST Tailor 1.9.43 */
+/* ST Tailor 1.9.44 */
 (() => {
   'use strict';
   // The script build runs inside Tavern Helper's iframe, so the real page is the parent window; the extension build runs in that window directly.
@@ -6,7 +6,7 @@
   const doc = host.document;
   const GLOBAL = '__ST_TAILOR__';
   const STORAGE = 'st_tailor_v1';
-  const VERSION = "1.9.43";
+  const VERSION = "1.9.44";
   const IN_JSDOM = /jsdom/i.test(window.navigator?.userAgent || '');
   // Search only inside #chat, not the whole document: this runs on every DOM change, so keep it cheap.
   function welcomePanel() { return doc.getElementById('chat')?.getElementsByClassName('welcomePanel')[0] || null; }
@@ -3810,6 +3810,12 @@
       grid.append(left, right); section.append(grid);
       return [left, right];
     };
+    const where = element('section', { class: 'stt-common' });
+    where.append(element('h3', {}, '놓는 곳'));
+    const [whereLeft] = columns(where);
+    whereLeft.append(field('시계 · 바로가기 위치', select([['inside', '홈 상자 안 맨 위'], ['above', '홈 상자 바깥 (바로 위)']], home.place, value => { home.place = value; preview(); }, '시계 · 바로가기 놓는 곳'),
+      tip('시계 · 검색 · 즐겨찾기가 들어갈 자리. 테마가 홈을 카드로 그려서 최근 채팅과 한 상자에 묶여 보이면 바깥을 고르세요')));
+    container.append(where);
     const box = element('section', { class: 'stt-common' });
     box.append(element('h3', {}, '시계'));
     const [clockLeft, clockRight] = columns(box);
@@ -3855,8 +3861,6 @@
     const syncFav = () => { favStyle.hidden = !home.favorites.enabled; };
     favorites.append(checkbox('즐겨찾기한 캐릭터 보이기', home.favorites.enabled, value => { home.favorites.enabled = value; syncFav(); preview(); }), favStyle);
     syncFav();
-    search.append(field('놓는 곳', select([['inside', '홈 상자 안 맨 위'], ['above', '홈 상자 바깥 (바로 위)']], home.place, value => { home.place = value; preview(); }, '시계 · 바로가기 놓는 곳'),
-      tip('시계 · 검색 · 즐겨찾기가 들어갈 자리. 테마가 홈을 카드로 그려서 최근 채팅과 한 상자에 묶여 보이면 바깥을 고르세요')));
     container.append(side);
     const hiding = element('section', { class: 'stt-common' });
     hiding.append(element('h3', {}, '홈에서 숨기기'));
