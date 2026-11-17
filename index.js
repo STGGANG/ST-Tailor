@@ -1,4 +1,4 @@
-/* ST Tailor 1.9.42 */
+/* ST Tailor 1.9.43 */
 (() => {
   'use strict';
   // The script build runs inside Tavern Helper's iframe, so the real page is the parent window; the extension build runs in that window directly.
@@ -6,7 +6,7 @@
   const doc = host.document;
   const GLOBAL = '__ST_TAILOR__';
   const STORAGE = 'st_tailor_v1';
-  const VERSION = "1.9.42";
+  const VERSION = "1.9.43";
   const IN_JSDOM = /jsdom/i.test(window.navigator?.userAgent || '');
   // Search only inside #chat, not the whole document: this runs on every DOM change, so keep it cheap.
   function welcomePanel() { return doc.getElementById('chat')?.getElementsByClassName('welcomePanel')[0] || null; }
@@ -773,25 +773,29 @@
 
   const fontController = createFontController(host, doc);
 
-  // Home screen: clock/date, character search and favorite characters above 'Recent Chats'; plus hiding parts of the home header (version, links).
+  // Home screen: clock/date, character search and favorite characters above 'Recent Chats' (inside the home panel or right above it); plus hiding parts of the home header (version, links).
   // Layout is ours; colors and fonts follow the theme (SillyTavern theme colors and font). Re-inserted whenever SillyTavern redraws the home.
   // order: sits above even decorations the theme draws at the start of the home (::before banners, etc.).
   const homeDefaults = () => ({
-    clock: { enabled: false, label: 'NOW', font: '', size: 100, top: 20, bottom: 8, hour12: false, date: true },
+    clock: { enabled: false, label: 'NOW', font: '', size: 100, top: 20, bottom: 8, hour12: false, date: true, color: 'soft', customColor: '' },
     hide: { version: false, links: false, temporary: false, settings: false, recent: false, assistant: false },
     search: false,
     favorites: { enabled: false, style: 'circle' },
+    place: 'inside',
   });
   const HOME_CSS = `
-#chat .welcomePanel > .stt-home { order: -100 !important; display: flex !important; flex-direction: column; align-items: center; gap: 18px; width: 100%; flex: none; align-self: stretch; min-height: 0; height: auto; box-sizing: border-box; margin: var(--stt-home-top, 20px) 0 var(--stt-home-bottom, 8px); padding: 0; text-align: center; color: var(--SmartThemeBodyColor, inherit); }
-#chat .welcomePanel > .stt-home[hidden] { display: none !important; }
+:is(#chat .welcomePanel, #chat) > .stt-home { order: -100 !important; display: flex !important; flex-direction: column; align-items: center; gap: 18px; width: 100%; flex: none; align-self: stretch; min-height: 0; height: auto; box-sizing: border-box; margin: var(--stt-home-top, 20px) 0 var(--stt-home-bottom, 8px); padding: 0; text-align: center; color: var(--SmartThemeBodyColor, inherit); }
+:is(#chat .welcomePanel, #chat) > .stt-home[hidden] { display: none !important; }
+#chat > .stt-home:not(:has(+ .welcomePanel)) { display: none !important; }
+#chat > .stt-home { margin-bottom: calc(var(--stt-home-bottom, 8px) + 16px); }
+.stt-home .stt-clock { color: var(--stt-clock-color, inherit); }
 .stt-home .stt-clock { display: flex; flex-direction: column; align-items: center; width: 100%; }
 .stt-home .stt-clock-label { font-size: 12px; line-height: 1.4; letter-spacing: .32em; opacity: .7; margin: 0 0 4px; padding-left: .32em; white-space: nowrap; }
 .stt-home .stt-clock-time { display: flex; align-items: baseline; gap: .12em; font-size: calc(clamp(52px, 11vw, 96px) * var(--stt-clock-scale, 1)); line-height: 1.02; font-variant-numeric: tabular-nums; letter-spacing: .02em; white-space: nowrap; }
 .stt-home .stt-clock-ampm { font-size: .26em; letter-spacing: .12em; opacity: .7; }
 .stt-home .stt-clock-date { margin-top: 8px; font-size: 13px; letter-spacing: .12em; opacity: .75; white-space: nowrap; }
-#chat .welcomePanel > .stt-home .stt-clock-rule.mes_text { all: unset !important; display: block !important; width: min(72%, 440px) !important; margin-top: 4px !important; }
-#chat .welcomePanel > .stt-home .stt-clock-rule > hr { width: 100%; }
+:is(#chat .welcomePanel, #chat) > .stt-home .stt-clock-rule.mes_text { all: unset !important; display: block !important; width: min(72%, 440px) !important; margin-top: 4px !important; }
+:is(#chat .welcomePanel, #chat) > .stt-home .stt-clock-rule > hr { width: 100%; }
 .stt-home .stt-home-search { position: relative; width: min(100%, 440px); }
 .stt-home .stt-home-search input { -webkit-appearance: none; appearance: none; box-sizing: border-box; width: 100%; height: 38px; margin: 0; padding: 0 14px 0 36px; border: 1px solid var(--SmartThemeBorderColor, currentColor); border-radius: 999px; background: color-mix(in srgb, var(--SmartThemeBlurTintColor, transparent) 70%, transparent); color: inherit; font: inherit; font-size: 14px; outline: none; }
 .stt-home .stt-home-search input:focus-visible { box-shadow: 0 0 0 2px color-mix(in srgb, var(--SmartThemeQuoteColor, currentColor) 55%, transparent); }
@@ -917,6 +921,8 @@
       if (node.style.getPropertyValue('--stt-clock-scale') !== scale) node.style.setProperty('--stt-clock-scale', scale);
       const top = `${c.top}px`;
       if (node.style.getPropertyValue('--stt-home-top') !== top) node.style.setProperty('--stt-home-top', top);
+      const color = c.color === 'body' ? '' : c.color === 'custom' && c.customColor ? c.customColor : 'color-mix(in srgb, var(--SmartThemeBodyColor, currentColor) 72%, transparent)';
+      if (node.style.getPropertyValue('--stt-clock-color') !== color) { if (color) node.style.setProperty('--stt-clock-color', color); else node.style.removeProperty('--stt-clock-color'); }
       const bottom = `${c.bottom}px`;
       if (node.style.getPropertyValue('--stt-home-bottom') !== bottom) node.style.setProperty('--stt-home-bottom', bottom);
       show(node.querySelector('.stt-home-search'), config.search);
@@ -925,17 +931,21 @@
     }
     const wanted = () => config.clock.enabled || config.search || config.favorites.enabled;
     // Re-insert if the home was redrawn (cheap: only looks up the home panel).
+    // 'above' puts the widgets in #chat right before the home panel, outside a theme that draws the panel as a card.
+    // Opening a chat may remove only the panel, so the widgets are taken out with it.
+    const placed = home => config.place === 'above' ? home.previousElementSibling === node : home.firstElementChild === node;
     function ensure() {
       if (!wanted()) return;
       const home = welcomePanel();
-      if (!home) return;
-      const fresh = node?.parentElement !== home;
+      if (!home) { if (node?.parentElement?.id === 'chat') node.remove(); return; }
+      const fresh = !node?.isConnected || !placed(home);
       if (!node) build();
       place(home);
       if (fresh) { paint(); renderResults(); tick(); }
     }
     function place(home) {
-      if (home.firstElementChild !== node) home.prepend(node);
+      if (placed(home)) return;
+      if (config.place === 'above') home.before(node); else home.prepend(node);
     }
     function hideCss(h) {
       const out = [];
@@ -963,11 +973,12 @@
       const family = config.clock.font;
       // @import must come first to load; also target nested text so it beats the Font tab's catch-all UI font rule.
       const css = (family ? fontController.fontCss([family], fonts?.custom || []).join('\n') + '\n' : '') + HOME_CSS + hide
-        + (family ? `\nhtml body #chat .welcomePanel > .stt-home :is(.stt-clock-time, .stt-clock-time *) { font-family: ${fontController.stack(family)} !important; }` : '');
+        + (family ? `\nhtml body :is(#chat .welcomePanel, #chat) > .stt-home :is(.stt-clock-time, .stt-clock-time *) { font-family: ${fontController.stack(family)} !important; }` : '');
       if (!style) { style = doc.createElement('style'); style.id = 'stt-home-style'; style.setAttribute('data-stt-owned', ''); doc.head.append(style); }
       if (css !== applied) { style.textContent = css; applied = css; }
       if (!wanted()) { host.clearTimeout(timer); timer = null; node?.remove(); node = null; query = ''; return; }
-      if (node?.isConnected) { place(node.parentElement); paint(); tick(); } else ensure();
+      const home = welcomePanel();
+      if (node?.isConnected && home) { place(home); paint(); tick(); } else ensure();
     }
     function dispose() {
       host.clearTimeout(timer); timer = null;
@@ -1425,10 +1436,12 @@
       || (clock.font.startsWith(CUSTOM_PREFIX) && result.fonts.custom.some(f => CUSTOM_PREFIX + f.name === clock.font))) ? clock.font : '';
     result.home = {
       clock: { enabled: clock.enabled === true, label: typeof clock.label === 'string' ? cleanString(clock.label, 40) : 'NOW',
-        font: clockFont, size: numberValue(clock.size, 50, 200) ?? 100, top: numberValue(clock.top, 0, 80) ?? 20, bottom: numberValue(clock.bottom, 0, 80) ?? 8, hour12: clock.hour12 === true, date: clock.date !== false },
+        font: clockFont, size: numberValue(clock.size, 50, 200) ?? 100, top: numberValue(clock.top, 0, 80) ?? 20, bottom: numberValue(clock.bottom, 0, 80) ?? 8, hour12: clock.hour12 === true, date: clock.date !== false,
+        color: ['soft', 'body', 'custom'].includes(clock.color) ? clock.color : 'soft', customColor: colorValue(clock.customColor) },
       hide: { version: hide.version === true, links: hide.links === true, temporary: hide.temporary === true, settings: hide.settings === true, recent: hide.recent === true, assistant: hide.assistant === true },
       search: home.search === true,
       favorites: { enabled: favs.enabled === true, style: favs.style === 'card' ? 'card' : 'circle' },
+      place: home.place === 'above' ? 'above' : 'inside',
     };
     const fold = isRecord(raw.topbarFold) ? raw.topbarFold : {};
     result.topbarFold = { mode: ['off', 'narrow', 'all'].includes(fold.mode) ? fold.mode : 'off', look: FOLD_LOOKS.includes(fold.look) ? fold.look : 'handle', color: colorValue(fold.color), hover: fold.hover !== false, chatOnly: fold.chatOnly === true };
@@ -3813,6 +3826,11 @@
     const clockFont = field('숫자 글꼴', select(fontOptions(), config.font, value => { config.font = value; clockSample.show(value); preview(); }, '시계 숫자 글꼴'));
     clockFont.append(clockSample.node);
     clockRight.append(clockFont);
+    const customColor = colorField(config.customColor, value => { config.customColor = value; preview(); });
+    const syncColor = () => { customColor.hidden = config.color !== 'custom'; };
+    const colorPick = field('숫자 색', select([['soft', '본문 글자색보다 옅게'], ['body', '본문 글자색 그대로'], ['custom', '직접 고르기']], config.color, value => { config.color = value; syncColor(); preview(); }, '시계 숫자 색'));
+    syncColor();
+    clockRight.append(colorPick, customColor);
     const clockSlider = (key, title, min, max, fallback, unit) => {
       const row = element('div', { class: 'stt-font-slider' });
       const range = element('input', { type: 'range', min, max, step: 1, value: config[key], 'aria-label': `시계 ${title}` });
@@ -3837,6 +3855,8 @@
     const syncFav = () => { favStyle.hidden = !home.favorites.enabled; };
     favorites.append(checkbox('즐겨찾기한 캐릭터 보이기', home.favorites.enabled, value => { home.favorites.enabled = value; syncFav(); preview(); }), favStyle);
     syncFav();
+    search.append(field('놓는 곳', select([['inside', '홈 상자 안 맨 위'], ['above', '홈 상자 바깥 (바로 위)']], home.place, value => { home.place = value; preview(); }, '시계 · 바로가기 놓는 곳'),
+      tip('시계 · 검색 · 즐겨찾기가 들어갈 자리. 테마가 홈을 카드로 그려서 최근 채팅과 한 상자에 묶여 보이면 바깥을 고르세요')));
     container.append(side);
     const hiding = element('section', { class: 'stt-common' });
     hiding.append(element('h3', {}, '홈에서 숨기기'));
@@ -4269,6 +4289,8 @@
       const time = element('div', { class: 'stt-pv-clock-time' }, `${String(h).padStart(2, '0')}:${m}${ampm}`);
       time.style.setProperty('--stt-pv-scale', String(clock.size / 100));
       if (clock.font) time.style.setProperty('font-family', fontController.stack(clock.font), 'important');
+      if (clock.color === 'custom' && clock.customColor) time.style.setProperty('color', clock.customColor, 'important');
+      else if (clock.color !== 'body') time.style.setProperty('opacity', '.72', 'important');
       wrap.append(time);
       if (clock.date) wrap.append(element('div', { class: 'stt-pv-clock-date' }, `${now.getMonth() + 1}월 ${now.getDate()}일 · ${'일월화수목금토'[now.getDay()]}`));
     }
