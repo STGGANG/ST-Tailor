@@ -1,4 +1,4 @@
-/* ST Tailor 1.9.50 */
+/* ST Tailor 1.9.51 */
 (() => {
   'use strict';
   // The script build runs inside Tavern Helper's iframe, so the real page is the parent window; the extension build runs in that window directly.
@@ -6,7 +6,7 @@
   const doc = host.document;
   const GLOBAL = '__ST_TAILOR__';
   const STORAGE = 'st_tailor_v1';
-  const VERSION = "1.9.50";
+  const VERSION = "1.9.51";
   const IN_JSDOM = /jsdom/i.test(window.navigator?.userAgent || '');
   // Search only inside #chat, not the whole document: this runs on every DOM change, so keep it cheap.
   function welcomePanel() { return doc.getElementById('chat')?.getElementsByClassName('welcomePanel')[0] || null; }
@@ -771,6 +771,19 @@
       const scaledAlias = FONT_LANG_ORDER.some(lang => (chat.langLook?.[lang]?.size ?? 100) !== 100 && langSource(chat, lang));
       const chatPlain = scaledAlias ? familyStack(chat, b.chatFamily, custom, true) : '';
       if (chatPlain) for (const lang of FONT_LANG_ORDER) { const css = chat.langs?.[lang] && aliases.get(`${lang}|${chat.langs[lang]}|100`); if (css && !rules.includes(css)) rules.push(css); }
+      // A partial font that picks its own typeface (often a Korean one) still leaves Japanese/Chinese letters to the
+      // language fonts; otherwise kana come from the Korean font and missing Han from the system font, mixed.
+      // English is left out: its range includes the quote marks the partial font is meant to restyle.
+      const cjkFirst = natural => ['ja', 'zh'].flatMap(lang => {
+        const id = chat.langs?.[lang];
+        if (!id) return [];
+        const size = natural ? 100 : chat.langLook?.[lang]?.size ?? 100;
+        requestAlias(lang, id, custom, size);
+        const css = aliases.get(`${lang}|${id}|${size}`);
+        if (!css) return [];
+        if (!rules.includes(css)) rules.push(css);
+        return [`"${aliasName(lang, id, size)}"`];
+      });
       const uiAll = `html body :not(${CHAT_TEXT}, ${CHAT_TEXT.split(', ').map(s => `${s} *`).join(', ')}, ${FONT_SKIP})`;
       // One catch-all-selector rule per group, to keep style recalculation cheap.
       const block = (selector, list) => { const decl = list.filter(Boolean); if (decl.length) rules.push(`${selector} { ${decl.join('; ')}; }`); };
@@ -821,7 +834,7 @@
       for (const mark of [...marks].sort((x, y) => !!x.open - !!y.open)) {
         const target = markTarget(mark);
         block(`${scope} :where(${target}), ${scope} :where(${target}) :where(:not(${FONT_SKIP}))`, [
-          mark.family && `font-family: ${stack(mark.family)} !important`,
+          mark.family && `font-family: ${[...cjkFirst(mark.size !== 100), stack(mark.family)].join(', ')} !important`,
           !mark.family && mark.size !== 100 && chatPlain && `font-family: ${chatPlain} !important`,
           mark.stroke !== null && `-webkit-text-stroke-width: ${mark.stroke / 10}px !important`,
           mark.spacing !== null && `letter-spacing: ${mark.spacing / 100}em !important`,
@@ -3650,17 +3663,25 @@
     return [['', THEME_AS_IS], ...groups];
   }
   // Loads only the chosen font; preloading the whole list would be heavy.
+  // Sample fonts load once per open panel: adding or removing a <style> makes the browser restyle the whole page,
+  // and redrawing the font tab used to do that for every sample on every visit.
+  function ensureSampleFont(value) {
+    const entry = value.startsWith(CUSTOM_PREFIX) ? draft.fonts.custom.find(f => CUSTOM_PREFIX + f.name === value) : null;
+    const key = entry ? `${value}|${entry.css.length}` : value;
+    if ([...panel.querySelectorAll(':scope > style[data-stt-sample-font]')].some(s => s.dataset.sttSampleFont === key)) return;
+    const css = element('style', { 'data-stt-sample-font': key });
+    css.textContent = fontController.fontCss([value], draft.fonts.custom).join('\n');
+    panel.append(css);
+  }
   function fontSample(id, text) {
     const sample = element('span', { class: 'stt-font-sample', 'aria-hidden': 'true' }, text);
-    const css = element('style');
     const show = value => {
       const known = value && (value.startsWith(CUSTOM_PREFIX) ? draft.fonts.custom.some(f => CUSTOM_PREFIX + f.name === value) : FONT_FACES[value]);
-      css.textContent = known ? fontController.fontCss([value], draft.fonts.custom).join('\n') : '';
+      if (known && panel) ensureSampleFont(value);
       if (known) sample.style.setProperty('--stt-sample-font', fontController.stack(value));
       else sample.style.removeProperty('--stt-sample-font');
     };
     show(id);
-    sample.append(css);
     return { node: sample, show };
   }
 
@@ -3865,12 +3886,19 @@
       row.append(...[grip, iconPreview(config.icon, record.originalIcon), copy, hidden, more].filter(Boolean));
       list.append(row);
     }
-    list.scrollTop = scroll;
+    if (scroll) list.scrollTop = scroll;   // writing it forces an immediate layout, so only when there is something to keep
     if (updateDetail) renderDetail();
     positionDetail();
   }
 
+  // Reading the tab bar's scroll size forces the browser to lay out the whole page right away; renders called this
+  // several times per tab switch (~50ms each with a heavy theme). One read just before the next paint is enough.
+  let tabFadeFrame = 0;
   function updateTabFade() {
+    if (tabFadeFrame) return;
+    tabFadeFrame = host.requestAnimationFrame(() => { tabFadeFrame = 0; measureTabFade(); });
+  }
+  function measureTabFade() {
     const tabs = panel?.querySelector('.stt-tabs');
     if (!tabs) return;
     const overflow = tabs.scrollWidth > tabs.clientWidth + 1;
@@ -4834,6 +4862,10 @@
     const content = panel.querySelector('.stt-content');
     const switched = content.dataset.sttArea !== selectedArea;
     if (switched) content.dataset.sttArea = selectedArea;
+    // A scrolled, long tab must not lend its offset to the new tab. Reset before the new content goes in: setting
+    // scrollTop after rendering made the browser lay out the whole page on the spot (slow with heavy themes).
+    // Never scroll the page or the tab bar.
+    if (switched) for (const node of [content, panel.querySelector('[data-stt-list]'), panel.querySelector('[data-stt-detail]'), panel]) if (node) node.scrollTop = 0;
     const common = panel.querySelector('[data-stt-common]'); common.replaceChildren();
     const live = panel.querySelector('[data-stt-live]'); if (live) live.textContent = '';
     if (draft.disabled) common.append(element('p', { class: 'stt-off-note', role: 'note' }, '재단사 전체가 꺼져 있습니다. 설정은 그대로 남아 있고, 다시 켜고 저장하면 적용됩니다.'));
@@ -4850,14 +4882,6 @@
     renderList();
     if (FORM_TABS.has(selectedArea)) positionDetail();
     if (switched) renderPreview();
-    if (switched) {
-      // A scrolled, long tab must not lend its offset to the new (shorter) tab.
-      // Reset after rendering so the browser sees the new scroll extent. Do not
-      // reset during ordinary field edits, and never scroll the page or tab bar.
-      for (const node of [content, panel.querySelector('[data-stt-list]'), panel.querySelector('[data-stt-detail]'), panel]) {
-        if (node) node.scrollTop = 0;
-      }
-    }
   }
 
   function closePanel(save = false) {
