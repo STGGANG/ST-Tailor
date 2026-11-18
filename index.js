@@ -1,4 +1,4 @@
-/* ST Tailor 1.9.44 */
+/* ST Tailor 1.9.50 */
 (() => {
   'use strict';
   // The script build runs inside Tavern Helper's iframe, so the real page is the parent window; the extension build runs in that window directly.
@@ -6,7 +6,7 @@
   const doc = host.document;
   const GLOBAL = '__ST_TAILOR__';
   const STORAGE = 'st_tailor_v1';
-  const VERSION = "1.9.44";
+  const VERSION = "1.9.50";
   const IN_JSDOM = /jsdom/i.test(window.navigator?.userAgent || '');
   // Search only inside #chat, not the whole document: this runs on every DOM change, so keep it cheap.
   function welcomePanel() { return doc.getElementById('chat')?.getElementsByClassName('welcomePanel')[0] || null; }
@@ -368,7 +368,9 @@
   const FONT_GROUPS = ['ui', 'chat'];
   const FONT_LIMITS = { size: [70, 160], lineHeight: [70, 200], stroke: [0, 8], spacing: [-10, 20], fade: [0, 80] };
   // stroke / spacing: null = keep the theme's (stroke 0 also removes any stroke the theme added)
-  const fontDefaults = () => ({ family: '', langs: { en: '', ja: '', zh: '' }, size: 100, lineHeight: 100, stroke: null, spacing: null });
+  // langLook: per-language size (both groups) and stroke/spacing (message text only, applied by wrapping that language's runs).
+  const langLookDefault = () => ({ size: 100, stroke: null, spacing: null });
+  const fontDefaults = () => ({ family: '', langs: { en: '', ja: '', zh: '' }, langLook: { en: langLookDefault(), ja: langLookDefault(), zh: langLookDefault() }, size: 100, lineHeight: 100, stroke: null, spacing: null });
   // Per-language fonts: the chosen font becomes an alias limited to that language's unicode-range, placed before the main font.
   // Japanese and Chinese share Han characters; if both are set, Han glyphs come from the earlier (Japanese) font.
   const FONT_LANG_ORDER = ['en', 'ja', 'zh'];
@@ -377,7 +379,12 @@
     ja: 'U+3000-30FF, U+31F0-31FF, U+3400-4DBF, U+4E00-9FFF, U+F900-FAFF, U+FF00-FFEF',
     zh: 'U+2E80-2FDF, U+3000-303F, U+3100-312F, U+31A0-31BF, U+3400-4DBF, U+4E00-9FFF, U+F900-FAFF, U+FE30-FE4F, U+FF00-FFEF',
   };
-  const langsUsed = g => FONT_LANG_ORDER.some(lang => g.langs?.[lang]);
+  const lookUsed = l => !!l && (l.size !== 100 || l.stroke !== null || l.spacing !== null);
+  // A scaled English alias covers letters only, so digits and punctuation inside Korean text ("3시") keep their size.
+  const EN_LETTERS = 'U+0041-005A, U+0061-007A, U+00C0-00D6, U+00D8-00F6, U+00F8-024F, U+1E00-1EFF';
+  const langsUsed = g => FONT_LANG_ORDER.some(lang => g.langs?.[lang] || lookUsed(g.langLook?.[lang]));
+  // The font a language alias is made from: its own font, or the group's main font when only the size is changed.
+  const langSource = (g, lang) => g.langs?.[lang] || (g.langLook?.[lang]?.size !== 100 && g.langLook?.[lang] ? g.family : '') || '';
   // Partial fonts: quotes and corner brackets in message text (SillyTavern wraps them in <q>) plus user-defined open/close characters.
   // No line height option: part of a line cannot have its own line height.
   const MARK_PRESETS = [
@@ -389,8 +396,9 @@
   const MARK_ADJUST = ['size', 'stroke', 'spacing', 'fade'];
   const markStyle = () => ({ family: '', size: 100, stroke: null, spacing: null, fade: 0 });
   const markDefaults = () => MARK_PRESETS.map(p => ({ id: p.id, ...markStyle() }));
-  const markUsed = m => !!m.family || m.size !== 100 || m.stroke !== null || m.spacing !== null || m.fade > 0;
-  const markChars = value => String(value ?? '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 4);
+  // A rule switched off keeps its settings but is not applied.
+  const markUsed = m => !m.off && !m.removed && (!!m.family || m.size !== 100 || m.stroke !== null || m.spacing !== null || m.fade > 0);
+  const markChars = value => Array.from(String(value ?? '').replace(/[\u0000-\u001f\u007f]/g, '').trim()).slice(0, 4).join('');   // whole characters, so an emoji isn't cut in half
   // Font tab styles (!important and the same specificity as the panel's other sections)
   const FONT_PANEL_CSS = `
 #stt-panel#stt-panel#stt-panel .stt-font-slider { display: grid !important; grid-template-columns: 3.6em minmax(0, 1fr) 6.4em 30px !important; align-items: center !important; gap: 10px !important; margin: 8px 0 0 !important; }
@@ -406,7 +414,7 @@
 #stt-panel#stt-panel#stt-panel .stt-font-chip { display: inline-flex !important; align-items: center !important; gap: 2px !important; padding: 2px 2px 2px 12px !important; border: 1px solid var(--stt-border) !important; border-radius: 999px !important; font-size: .9em !important; }
 #stt-panel#stt-panel#stt-panel .stt-font-code::placeholder { color: var(--stt-muted) !important; opacity: .7 !important; }
 #stt-panel#stt-panel#stt-panel .stt-font-code:focus-visible { outline: 2px solid var(--stt-accent) !important; outline-offset: 2px !important; }
-#stt-panel#stt-panel#stt-panel .stt-font-mark { display: grid !important; grid-template-columns: minmax(0, 8.5em) minmax(0, 1fr) auto !important; align-items: center !important; gap: 10px !important; margin: 8px 0 0 !important; }
+#stt-panel#stt-panel#stt-panel .stt-font-mark { display: grid !important; grid-template-columns: minmax(0, 8.5em) minmax(0, 1fr) auto 30px auto !important; align-items: center !important; gap: 10px !important; margin: 8px 0 0 !important; }
 #stt-panel#stt-panel#stt-panel .stt-font-mark > span { display: flex !important; flex-direction: column !important; min-width: 0 !important; line-height: 1.25 !important; }
 #stt-panel#stt-panel#stt-panel .stt-font-mark > span > small { font-size: .78em !important; opacity: .65 !important; white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important; }
 #stt-panel#stt-panel#stt-panel .stt-font-mark > button { width: 30px !important; height: 30px !important; min-width: 30px !important; min-height: 30px !important; padding: 0 !important; }
@@ -414,8 +422,8 @@
 #stt-panel#stt-panel#stt-panel .stt-font-mark-toggle[aria-expanded="true"] { border-color: var(--stt-accent-line) !important; background: var(--stt-wash3) !important; }
 #stt-panel#stt-panel#stt-panel .stt-font-mark-adjust { margin: 2px 0 6px 2px !important; padding: 0 0 4px 14px !important; border-left: 2px solid var(--stt-border) !important; }
 #stt-panel#stt-panel#stt-panel .stt-font-mark-add { display: grid !important; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto !important; gap: 8px !important; align-items: center !important; margin: 14px 0 0 !important; }
-#stt-panel#stt-panel#stt-panel .stt-font-marks-custom .stt-font-mark { grid-template-columns: minmax(0, 8.5em) minmax(0, 1fr) auto 30px !important; }\n@media (max-width: 600px) { #stt-panel#stt-panel#stt-panel .stt-font-mark { grid-template-columns: minmax(0, 5em) minmax(0, 1fr) auto !important; gap: 6px !important; } #stt-panel#stt-panel#stt-panel .stt-font-marks-custom .stt-font-mark { grid-template-columns: minmax(0, 5em) minmax(0, 1fr) auto 30px !important; } }
-#stt-panel#stt-panel#stt-panel .stt-font-note { display: block !important; margin: 10px 0 0 !important; }
+#stt-panel#stt-panel#stt-panel .stt-font-mark-restore { display: flex !important; flex-wrap: wrap !important; align-items: center !important; gap: 6px !important; margin: 10px 0 0 !important; color: var(--stt-muted) !important; font-size: .82em !important; }\n#stt-panel#stt-panel#stt-panel .stt-font-mark-restore button { min-height: 28px !important; padding: 0 10px !important; font-size: 1em !important; white-space: nowrap !important; }\n#stt-panel#stt-panel#stt-panel .stt-font-mark[data-off] > :is(span, select, .stt-font-mark-toggle) { opacity: .45 !important; }\n@media (max-width: 600px) { #stt-panel#stt-panel#stt-panel .stt-font-mark { grid-template-columns: minmax(0, 5em) minmax(0, 1fr) auto 30px auto !important; gap: 6px !important; } }
+#stt-panel#stt-panel#stt-panel .stt-font-note { display: block !important; margin: 10px 0 0 !important; }\n#stt-panel#stt-panel#stt-panel .stt-font-langs-body .stt-font-mark-adjust { margin: -4px 0 12px 2px !important; }\n#stt-panel#stt-panel#stt-panel .stt-font-mark-adjust > .stt-font-note { margin: 4px 0 !important; }
 #stt-panel#stt-panel#stt-panel .stt-font-sample { display: block !important; overflow: hidden !important; padding: 0 2px !important; font-family: var(--stt-sample-font, var(--stt-ui-font, inherit)) !important; font-size: 1.02em !important; line-height: 1.5 !important; white-space: nowrap !important; text-overflow: ellipsis !important; opacity: .78 !important; }
 #stt-panel#stt-panel#stt-panel select optgroup { background: var(--stt-solid) !important; color: var(--stt-muted) !important; font-style: normal !important; }
 #stt-panel#stt-panel#stt-panel .stt-font-chip > button { min-width: 26px !important; min-height: 26px !important; padding: 0 !important; border: 0 !important; background: none !important; }
@@ -438,9 +446,9 @@
   #stt-panel#stt-panel#stt-panel .stt-home-cols > .stt-sub-narrow > .stt-field:first-child { margin-top: 0 !important; padding-top: 12px !important; }
   #stt-panel#stt-panel#stt-panel .stt-home-cols .stt-sub { margin-bottom: 0 !important; }
 }
-#stt-panel#stt-panel#stt-panel .stt-font-lang { display: grid !important; grid-template-columns: 3.6em minmax(0, 1fr) !important; align-items: center !important; gap: 4px 10px !important; margin: 0 0 10px !important; font-size: inherit !important; }
-#stt-panel#stt-panel#stt-panel .stt-font-lang > span:first-child { font-size: .92em !important; }
-#stt-panel#stt-panel#stt-panel .stt-font-lang > .stt-font-sample { grid-column: 2 !important; font-size: .92em !important; }
+#stt-panel#stt-panel#stt-panel .stt-font-lang { display: grid !important; grid-template-columns: 3.6em minmax(0, 1fr) auto !important; align-items: center !important; gap: 4px 10px !important; margin: 0 0 10px !important; font-size: inherit !important; }
+#stt-panel#stt-panel#stt-panel .stt-font-lang > span:first-child { font-size: .92em !important; }\n#stt-panel#stt-panel#stt-panel .stt-font-lang > button.stt-font-mark-toggle { width: 4.6em !important; min-width: 4.6em !important; padding: 0 !important; white-space: nowrap !important; font-size: .86em !important; }
+#stt-panel#stt-panel#stt-panel .stt-font-lang > .stt-font-sample { grid-column: 2 / -1 !important; font-size: .92em !important; }
 `;
   const CUSTOM_PREFIX = 'custom:';
   const MAX_CUSTOM_FONTS = 20;
@@ -540,7 +548,7 @@
     const round = value => Math.round(value * 100) / 100;
 
     // Per-language aliases: collect the font's @font-face rules (including imported CSS), rename them, and narrow unicode-range to that language.
-    const aliasName = (lang, id) => `STT ${lang} ${id}`.replace(/["\\]/g, '');
+    const aliasName = (lang, id, size = 100) => `STT ${lang} ${id}${size !== 100 ? ` s${size}` : ''}`.replace(/["\\]/g, '');
     const aliases = new Map();   // 'lang|id' → CSS ('' = failed); missing = still loading
     const sheets = new Map();    // CSS URL → Promise<text>
     let lastConfig = null;
@@ -565,62 +573,93 @@
         inline: (face.faces || []).map(([, url, weight, format]) => `@font-face { src: url("${url}") format("${format}"); font-weight: ${weight}; font-style: normal; font-display: swap; }`).join('\n'),
       };
     }
-    function rewrite(text, baseUrl, alias, lang) {
-      const allowed = parseRanges(FONT_LANG_RANGES[lang]);
+    function rewrite(text, baseUrl, alias, lang, size = 100) {
+      const allowed = parseRanges(lang === 'en' && size !== 100 ? EN_LETTERS : FONT_LANG_RANGES[lang]);
       const out = [];
       for (const [block] of String(text).matchAll(/@font-face\s*\{[^}]*\}/gi)) {
         let body = block.replace(/^@font-face\s*\{|\}$/gi, '');
         const own = /unicode-range\s*:\s*([^;]+)/i.exec(body);
         const ranges = own ? intersect(parseRanges(own[1]), allowed) : allowed;
         if (!ranges.length) continue;
-        body = body.replace(/font-family\s*:[^;]*;?/gi, '').replace(/unicode-range\s*:[^;]*;?/gi, '')
+        body = body.replace(/font-family\s*:[^;]*;?/gi, '').replace(/unicode-range\s*:[^;]*;?/gi, '').replace(/size-adjust\s*:[^;]*;?/gi, '')
           .replace(/url\(\s*(["']?)([^"')]+)\1\s*\)/g, (match, quote, url) => { try { return `url("${new URL(url, baseUrl).href}")`; } catch { return match; } });
-        out.push(`@font-face { font-family: "${alias}"; ${body.trim().replace(/;?$/, ';')} unicode-range: ${rangeText(ranges)}; }`);
+        // size-adjust scales just this language's glyphs (Chrome/Firefox 92+, Safari 17+; older browsers keep the size).
+        out.push(`@font-face { font-family: "${alias}"; ${body.trim().replace(/;?$/, ';')} unicode-range: ${rangeText(ranges)};${size !== 100 ? ` size-adjust: ${size}%;` : ''} }`);
       }
       return out.join('\n');
     }
-    function requestAlias(lang, id, custom) {
-      const key = `${lang}|${id}`;
+    function requestAlias(lang, id, custom, size = 100) {
+      const key = `${lang}|${id}|${size}`;
       if (aliases.has(key) || !host.fetch) return;
       const source = fontSources(id, custom);
       if (!source) return;
       aliases.set(key, undefined);
-      const alias = aliasName(lang, id);
+      const alias = aliasName(lang, id, size);
       const fetchSheet = url => {
         if (!sheets.has(url)) sheets.set(url, host.fetch(url).then(r => r.ok ? r.text() : '').catch(() => ''));
-        return sheets.get(url).then(text => rewrite(text, url, alias, lang));
+        return sheets.get(url).then(text => rewrite(text, url, alias, lang, size));
       };
       Promise.all(source.imports.map(fetchSheet)).then(parts => {
-        aliases.set(key, [rewrite(source.inline, doc.baseURI, alias, lang), ...parts].filter(Boolean).join('\n'));
+        aliases.set(key, [rewrite(source.inline, doc.baseURI, alias, lang, size), ...parts].filter(Boolean).join('\n'));
         if (lastConfig) sync(lastConfig);
       });
     }
     // Group font stack: language aliases (loaded ones only) → main font (or the theme font) → generic family
-    function familyStack(group, theme, custom) {
+    // plain: language fonts at their natural size (inside partial-font text that sets its own size).
+    function familyStack(group, theme, custom, plain = false) {
       const parts = [];
       for (const lang of FONT_LANG_ORDER) {
-        const id = group.langs?.[lang];
+        const id = plain ? group.langs?.[lang] : langSource(group, lang), size = plain ? 100 : group.langLook?.[lang]?.size ?? 100;
         if (!id) continue;
-        requestAlias(lang, id, custom);
-        if (aliases.get(`${lang}|${id}`)) parts.push(`"${aliasName(lang, id)}"`);
+        requestAlias(lang, id, custom, size);
+        if (aliases.get(`${lang}|${id}|${size}`)) parts.push(`"${aliasName(lang, id, size)}"`);
+        // A chosen English font still draws the digits and punctuation the scaled (letters-only) alias leaves out.
+        if (lang === 'en' && size !== 100 && group.langs?.en) {
+          requestAlias(lang, group.langs.en, custom, 100);
+          if (aliases.get(`en|${group.langs.en}|100`)) parts.push(`"${aliasName('en', group.langs.en)}"`);
+        }
       }
       if (group.family) return [...parts, stack(group.family)].join(', ');
       return parts.length ? [...parts, theme || 'sans-serif'].join(', ') : '';
     }
-    const aliasCss = groups => FONT_LANG_ORDER.flatMap(lang => groups.map(g => g.langs?.[lang] && aliases.get(`${lang}|${g.langs[lang]}`)).filter(Boolean));
+    const aliasCss = groups => [...new Set(FONT_LANG_ORDER.flatMap(lang => groups.flatMap(g => {
+      const size = g.langLook?.[lang]?.size ?? 100, keys = [];
+      if (langSource(g, lang)) keys.push(`${lang}|${langSource(g, lang)}|${size}`);
+      if (lang === 'en' && size !== 100 && g.langs?.en) keys.push(`en|${g.langs.en}|100`);
+      return keys.map(key => aliases.get(key));
+    }).filter(Boolean)))];
 
     // Partial-font marking: tag each <q> as quote or corner bracket, and wrap user-rule text in <span>.
     // When a message re-renders (streaming, edit, swipe), the observer re-marks only that message.
     const MARK_ROOTS = '.mes_text, .mes_reasoning';
     const MARK_SKIP = 'code, pre, textarea, script, style, [contenteditable="true"], [data-stt-mark]';
     const escapeRe = text => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    function planMarks(marks) {
+    // Runs of one language in message text, wrapped so that language can get its own stroke/spacing (and size when
+    // there is no font to scale). English: Latin words with the spaces between them (digits alone stay out, as in "3시").
+    // Japanese/Chinese share Han: with both set, runs holding kana are Japanese and pure-Han runs Chinese.
+    const LATIN = '[\\p{Script=Latin}][\\p{Script=Latin}0-9\'’\\-]*';
+    const CJK_MARKS = '\\u3001\\u3002\\u3005\\u3006\\u30FB\\u30FC';
+    const langPattern = (lang, langs) => {
+      if (lang === 'en') return `${LATIN}(?: +${LATIN})*`;
+      const kana = '\\p{Script=Hiragana}\\p{Script=Katakana}';
+      if (lang === 'ja') {
+        const all = `[${kana}\\p{Script=Han}${CJK_MARKS}]`;
+        return langs.includes('zh') ? `${all}*[${kana}]${all}*` : `[${CJK_MARKS}]*[${kana}\\p{Script=Han}]${all}*`;
+      }
+      return `\\p{Script=Han}[\\p{Script=Han}${CJK_MARKS}]*`;
+    };
+    function planMarks(marks, langs = []) {
       const custom = marks.filter(m => m.open);
-      const source = custom.map(m => `(${escapeRe(m.open)}[^\n]+?${escapeRe(m.close)})`).join('|');
+      const parts = [...custom.map(m => `(${escapeRe(m.open)}[^\n]+?${escapeRe(m.close)})`), ...langs.map(lang => `(${langPattern(lang, langs)})`)];
+      const source = parts.join('|');
+      const tagQuotes = marks.some(m => m.id === 'quote' || m.id === 'corner');
+      const langSource = langs.map(lang => `(${langPattern(lang, langs)})`).join('|');
       return {
-        tagQuotes: marks.some(m => m.id === 'quote' || m.id === 'corner'),
-        test: source ? new RegExp(source) : null, find: source ? new RegExp(source, 'g') : null,
-        ids: custom.map(m => m.id), key: `${marks.some(m => m.id === 'quote' || m.id === 'corner')}|${source}`,
+        tagQuotes,
+        test: source ? new RegExp(source, 'u') : null, find: source ? new RegExp(source, 'gu') : null,
+        ids: [...custom.map(m => m.id), ...langs.map(lang => `lang-${lang}`)], key: `${tagQuotes}|${source}`,
+        // Text already inside a user-rule span still gets its language runs (that rule wins only for what it sets).
+        inner: langSource && custom.length ? { test: new RegExp(langSource, 'u'), find: new RegExp(langSource, 'gu'), ids: langs.map(lang => `lang-${lang}`) } : null,
       };
     }
     function markText(root, plan) {
@@ -629,24 +668,31 @@
         if (q.dataset.sttQ !== kind) q.dataset.sttQ = kind;
       }
       if (!plan.test) return;
-      const walker = doc.createTreeWalker(root, 4);   // NodeFilter.SHOW_TEXT
-      const found = [];
-      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-        if (plan.test.test(node.data) && !node.parentElement?.closest(MARK_SKIP)) found.push(node);
-      }
-      for (const node of found) {
+      // Pass 1: plain text (user rules and language runs). Pass 2: language runs inside user-rule spans.
+      const wrap = (node, rule) => {
         const parts = doc.createDocumentFragment();
         let last = 0;
-        for (const m of node.data.matchAll(plan.find)) {
+        for (const m of node.data.matchAll(rule.find)) {
           if (m.index > last) parts.append(node.data.slice(last, m.index));
           const span = doc.createElement('span');
-          span.dataset.sttMark = plan.ids[m.slice(1).findIndex(Boolean)];
+          span.dataset.sttMark = rule.ids[m.slice(1).findIndex(Boolean)];
           span.textContent = m[0];
           parts.append(span);
           last = m.index + m[0].length;
         }
         if (last < node.data.length) parts.append(node.data.slice(last));
         node.replaceWith(parts);
+      };
+      for (const pass of [plan, plan.inner]) {
+        if (!pass) continue;
+        const walker = doc.createTreeWalker(root, 4);   // NodeFilter.SHOW_TEXT
+        const found = [];
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+          const parent = node.parentElement, owner = parent?.closest('[data-stt-mark]');
+          if (pass === plan ? parent?.closest(MARK_SKIP) : !owner || owner.dataset.sttMark.startsWith('lang-') || parent?.closest(MARK_SKIP.replace(', [data-stt-mark]', ''))) continue;
+          if (pass.test.test(node.data)) found.push(node);
+        }
+        for (const node of found) wrap(node, pass);
       }
     }
     function unmark() {
@@ -688,16 +734,22 @@
 
     // Elsewhere SillyTavern fits the input's height only while typing; refit after a font change (and once more
     // shortly after, in case its listener wasn't attached yet at startup).
+    // Debounced: dragging a font slider rewrites the style many times, and each refit runs SillyTavern's input handlers.
+    let refitSoon = 0, refitLate = 0;
     const refitInput = () => {
       const fit = () => doc.getElementById('send_textarea')?.dispatchEvent(new host.Event('input'));
-      fit();
-      host.setTimeout(fit, 1500);
+      host.clearTimeout(refitSoon); host.clearTimeout(refitLate);
+      refitSoon = host.setTimeout(fit, 120);
+      refitLate = host.setTimeout(fit, 1500);
     };
     function sync(config) {
       lastConfig = config;
       const ui = config?.ui || fontDefaults(), chat = config?.chat || fontDefaults();
       const marks = (config?.marks || []).filter(markUsed);
-      syncMarks(marks.length ? planMarks(marks) : null);
+      // Message-text language runs that need wrapping: stroke/spacing set, or a size with no font to scale.
+      const spanSize = lang => (chat.langLook?.[lang]?.size ?? 100) !== 100 && !langSource(chat, lang);
+      const langRuns = FONT_LANG_ORDER.filter(lang => { const l = chat.langLook?.[lang]; return l && (l.stroke !== null || l.spacing !== null || spanSize(lang)); });
+      syncMarks(marks.length || langRuns.length ? planMarks(marks, langRuns) : null);
       const used = marks.length || [ui, chat].some(g => g.family || langsUsed(g) || g.size !== 100 || g.lineHeight !== 100 || g.stroke !== null || g.spacing !== null);
       if (!used) { if (style) { style.remove(); style = null; base = null; baseKey = ''; applied = ''; refitInput(); } return; }
       if (!style) {
@@ -714,6 +766,11 @@
       const rules = fontCss([ui.family, chat.family, ...marks.map(m => m.family)].filter(Boolean), custom);
       const uiFamily = familyStack(ui, b.uiFamily, custom), chatFamily = familyStack(chat, b.chatFamily, custom);
       rules.push(...aliasCss([ui, chat]));
+      // Message language sizes made through a font (size-adjust) must not stack on a partial-font size: such text
+      // gets the language fonts at natural size instead.
+      const scaledAlias = FONT_LANG_ORDER.some(lang => (chat.langLook?.[lang]?.size ?? 100) !== 100 && langSource(chat, lang));
+      const chatPlain = scaledAlias ? familyStack(chat, b.chatFamily, custom, true) : '';
+      if (chatPlain) for (const lang of FONT_LANG_ORDER) { const css = chat.langs?.[lang] && aliases.get(`${lang}|${chat.langs[lang]}|100`); if (css && !rules.includes(css)) rules.push(css); }
       const uiAll = `html body :not(${CHAT_TEXT}, ${CHAT_TEXT.split(', ').map(s => `${s} *`).join(', ')}, ${FONT_SKIP})`;
       // One catch-all-selector rule per group, to keep style recalculation cheap.
       const block = (selector, list) => { const decl = list.filter(Boolean); if (decl.length) rules.push(`${selector} { ${decl.join('; ')}; }`); };
@@ -750,16 +807,35 @@
       ]);
       // Partial fonts share one specificity, so later rules win (user-rule text inside quotes follows the user rule).
       const scope = 'html body #chat#chat .mes :is(.mes_text, .mes_reasoning)';
+      // Order: message font → language → partial font, later wins. A partial-font rule that sets stroke/spacing/size wins
+      // inside it; what it leaves unset still follows the language.
+      for (const lang of langRuns) {
+        const look = chat.langLook[lang], target = `${scope} :where([data-stt-mark="lang-${lang}"])`;
+        block(target, [
+          look.stroke !== null && `-webkit-text-stroke-width: ${look.stroke / 10}px !important`,
+          look.spacing !== null && `letter-spacing: ${look.spacing / 100}em !important`,
+          spanSize(lang) && `font-size: ${look.size / 100}em !important`,
+        ]);
+      }
+      const markTarget = mark => mark.id === 'quote' ? 'q:not([data-stt-q="corner"])' : mark.id === 'corner' ? 'q[data-stt-q="corner"]' : `[data-stt-mark="${mark.id}"]`;
       for (const mark of [...marks].sort((x, y) => !!x.open - !!y.open)) {
-        const target = mark.id === 'quote' ? 'q:not([data-stt-q="corner"])' : mark.id === 'corner' ? 'q[data-stt-q="corner"]' : `[data-stt-mark="${mark.id}"]`;
+        const target = markTarget(mark);
         block(`${scope} :where(${target}), ${scope} :where(${target}) :where(:not(${FONT_SKIP}))`, [
           mark.family && `font-family: ${stack(mark.family)} !important`,
+          !mark.family && mark.size !== 100 && chatPlain && `font-family: ${chatPlain} !important`,
           mark.stroke !== null && `-webkit-text-stroke-width: ${mark.stroke / 10}px !important`,
           mark.spacing !== null && `letter-spacing: ${mark.spacing / 100}em !important`,
         ]);
         // Size on the wrapper only; applying it to descendants would compound the em.
         if (mark.size !== 100) rules.push(`${scope} :where(${target}) { font-size: ${mark.size / 100}em !important; }`);
         if (mark.fade > 0) rules.push(`${scope} :where(${target}) { opacity: ${round((100 - mark.fade) / 100)} !important; }`);
+      }
+      // Sizes are em, so nested sizes would multiply. Inside a quote that sets a size, a user rule's size is taken
+      // relative to the message (not the quote) and language runs keep the quote's size.
+      for (const outer of marks.filter(m => m.size !== 100)) {
+        const within = `${scope} :where(${markTarget(outer)})`;
+        if (!outer.open) for (const inner of marks.filter(m => m.open && m.size !== 100)) rules.push(`${within} :where([data-stt-mark="${inner.id}"]) { font-size: ${round(inner.size / outer.size)}em !important; }`);
+        for (const lang of langRuns) if (spanSize(lang)) rules.push(`${within} :where([data-stt-mark="lang-${lang}"]) { font-size: inherit !important; }`);
       }
       const text = rules.join('\n');
       if (text !== applied) {
@@ -1339,7 +1415,7 @@
   }
   const koLocaleController = createKoLocaleController();
 
-  const PANEL_CSS = "@font-face { font-family: \"STT Phosphor\"; src: url(\"https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.1/src/regular/Phosphor.woff2\") format(\"woff2\"); font-weight: 400; font-style: normal; font-display: block; }\n/* SillyTavern menus and buttons */\n[data-stt-hidden][data-stt-hidden][data-stt-hidden][data-stt-hidden] { display: none !important; }\n[data-stt-ordered-menu]:not([hidden]):not(.displayNone):not([style*=\"display: none\"]):not([style*=\"display:none\"]) { display: flex !important; flex-direction: column; }\n[data-stt-no-glyph][data-stt-no-glyph][data-stt-no-glyph][data-stt-no-glyph]::before { content: \"\" !important; }\n[data-stt-source-color][data-stt-source-color][data-stt-source-color][data-stt-source-color]::before { color: var(--stt-source-color) !important; }\n[data-stt-glyph][data-stt-glyph][data-stt-glyph][data-stt-glyph]::before { content: var(--stt-glyph) !important; font-family: var(--stt-font) !important; font-weight: var(--stt-weight) !important; font-style: normal !important; }\n[data-stt-added-icon][data-stt-added-icon][data-stt-added-icon][data-stt-added-icon] { display: inline-block; margin-inline-end: .5em; pointer-events: none; }\n[data-stt-text] { pointer-events: none; }\n[data-stt-menu-row][data-stt-menu-row][data-stt-menu-row][data-stt-menu-row] { position: relative !important; padding-inline-start: calc(var(--stt-inset, 0px) + var(--stt-slot, 1.4em) + var(--stt-gap, .6em)) !important; text-indent: 0 !important; }\n[data-stt-menu-row][data-stt-menu-row][data-stt-menu-row][data-stt-menu-row][data-stt-menu-no-icon][data-stt-menu-no-icon][data-stt-menu-no-icon][data-stt-menu-no-icon] { padding-inline-start: var(--stt-inset, 4px) !important; }\n[data-stt-menu-label][data-stt-menu-label][data-stt-menu-label][data-stt-menu-label] { margin-inline-start: 0 !important; padding-inline-start: 0 !important; text-indent: 0 !important; }\n[data-stt-menu-icon][data-stt-menu-icon][data-stt-menu-icon][data-stt-menu-icon], [data-stt-menu-root-icon][data-stt-menu-root-icon][data-stt-menu-root-icon][data-stt-menu-root-icon]::before {\n  position: absolute !important; inset-inline-start: var(--stt-inset, 0px) !important;\n  top: 50% !important; translate: 0 -50% !important; width: var(--stt-slot, 1.4em) !important;\n  min-width: 0 !important; margin: 0 !important; padding: 0 !important; text-align: center !important;\n}\n[data-stt-message-button]:not([data-stt-hidden]) { display: inline-flex !important; align-items: center !important; justify-content: center !important; flex: 0 0 auto !important; align-self: center !important; margin: 0 !important; float: none !important; }\n[data-stt-button-glyph][data-stt-button-glyph][data-stt-button-glyph][data-stt-button-glyph]::before { position: static !important; margin: 0 !important; padding: 0 !important; text-indent: 0 !important; translate: none !important; }\n[data-stt-added-icon][data-stt-added-icon][data-stt-added-icon][data-stt-added-icon][data-stt-button-glyph][data-stt-button-glyph][data-stt-button-glyph][data-stt-button-glyph] { margin: 0 !important; }\n[data-stt-extension-layout] { display: grid !important; grid-template-columns: minmax(0, 1fr) !important; grid-template-rows: none !important; grid-auto-flow: row !important; grid-auto-rows: 1px !important; grid-auto-columns: minmax(0, 1fr) !important; align-items: start !important; align-content: start !important; column-gap: 10px !important; row-gap: 0 !important; }\n[data-stt-extension-item] { min-width: 0 !important; width: 100% !important; align-self: start !important; grid-area: auto !important; grid-column: auto !important; grid-row: auto !important; }\n[data-stt-extension-path] { display: contents !important; padding: 0 !important; margin: 0 !important; border: 0 !important; background: transparent !important; }\n#stt-open-wand { cursor: pointer; gap: .6em; align-items: center; order: 90000; }\n#stt-open-wand:focus-visible { outline: 2px solid currentColor; outline-offset: -2px; }\n/* Settings panel: follows theme colors; only the point color, warnings and reset get their own color */\n#stt-panel#stt-panel, #stt-panel#stt-panel :where(*) { all:revert!important; box-sizing:border-box!important; font-family:var(--stt-ui-font,inherit)!important; color:inherit!important; text-shadow:none!important; background-image:none!important; filter:none!important; }\n#stt-panel#stt-panel :where(*)::before, #stt-panel#stt-panel :where(*)::after { all:revert!important; content:none!important; }\n#stt-panel#stt-panel#stt-panel {\n  --stt-bg: var(--SmartThemeBlurTintColor, #1f1f1f) !important;\n  --stt-solid: var(--stt-bg) !important;\n  --stt-fg: var(--SmartThemeBodyColor, #eee) !important;\n  --stt-muted: color-mix(in srgb, var(--stt-fg) 64%, transparent) !important;\n  --stt-faint: color-mix(in srgb, var(--stt-fg) 42%, transparent) !important;\n  --stt-border: color-mix(in srgb, var(--stt-fg) 12%, transparent) !important;\n  --stt-wash: color-mix(in srgb, var(--stt-fg) 5%, transparent) !important;\n  --stt-wash2: color-mix(in srgb, var(--stt-fg) 9%, transparent) !important;\n  --stt-wash3: color-mix(in srgb, var(--stt-fg) 14%, transparent) !important;\n  --stt-accent: var(--stt-fg) !important;\n  --stt-accent-line: color-mix(in srgb, var(--stt-fg) 45%, transparent) !important;\n  /* Point color (fixed indigo): only marks \"where am I\" and the main action; everything else follows the theme. */\n  --stt-point: #7b72e9 !important;\n  --stt-point-text: color-mix(in srgb, var(--stt-point) 72%, var(--stt-fg)) !important;\n  --stt-point-soft: color-mix(in srgb, var(--stt-point) 16%, transparent) !important;\n  --stt-point-soft2: color-mix(in srgb, var(--stt-point) 26%, transparent) !important;\n  --stt-point-line: color-mix(in srgb, var(--stt-point) 50%, transparent) !important;\n  --stt-danger: color-mix(in srgb, #e5484d 80%, var(--stt-fg)) !important;\n  --stt-warn: color-mix(in srgb, #d99a2b 82%, var(--stt-fg)) !important;\n  --stt-warn-soft: color-mix(in srgb, #e3a33a 14%, transparent) !important;\n  box-sizing: border-box !important; color: var(--stt-fg) !important; background: var(--stt-solid) !important;\n  font-family: var(--stt-ui-font, inherit) !important; font-size: clamp(13px, var(--mainFontSize, 15px), 16px) !important; line-height: 1.45 !important;\n  width: min(960px, calc(100vw - 28px)) !important; max-width: 960px !important;\n  height: min(900px, calc(100dvh - 56px)) !important; max-height: calc(100dvh - 28px) !important;\n  border: 1px solid var(--stt-border) !important; border-radius: 18px !important; padding: 0 !important; margin: auto !important;\n  box-shadow: 0 18px 50px rgba(0,0,0,.22) !important; backdrop-filter: none !important; overflow: hidden !important;\n}\n/* Make translucent theme backgrounds opaque (no show-through behind the dialog, switch knobs, save button text) */\n@supports (color: rgb(from red r g b)) { #stt-panel#stt-panel#stt-panel { --stt-solid: rgb(from var(--stt-bg) r g b / 1) !important; } }\n#stt-panel#stt-panel#stt-panel[open] { display: flex !important; flex-direction: column !important; }\n#stt-panel#stt-panel#stt-panel:focus, #stt-panel#stt-panel#stt-panel:focus-visible { outline: none !important; }\n#stt-panel#stt-panel#stt-panel::backdrop { background:#0009 !important; backdrop-filter:none !important; }\n#stt-panel#stt-panel#stt-panel *, #stt-panel#stt-panel#stt-panel *::before, #stt-panel#stt-panel#stt-panel *::after { box-sizing: border-box !important; text-shadow: none !important; }\n#stt-panel#stt-panel#stt-panel h2, #stt-panel#stt-panel#stt-panel h3, #stt-panel#stt-panel#stt-panel h4, #stt-panel#stt-panel#stt-panel p { padding: 0 !important; margin: 0 !important; }\n#stt-panel#stt-panel#stt-panel h2 { font: inherit !important; font-size: 1.12em !important; font-weight: 700 !important; letter-spacing: -.02em !important; line-height: 1.3 !important; color: inherit !important; }\n#stt-panel#stt-panel#stt-panel h3 { font: inherit !important; font-size: .95em !important; font-weight: 700 !important; letter-spacing: -.01em !important; line-height: 1.35 !important; color: inherit !important; }\n#stt-panel#stt-panel#stt-panel small { font-size: .8em !important; line-height: 1.5 !important; color: var(--stt-muted) !important; }\n\n/* Buttons */\n#stt-panel#stt-panel#stt-panel button, #stt-panel#stt-panel#stt-panel input, #stt-panel#stt-panel#stt-panel select, #stt-panel#stt-panel#stt-panel textarea { font: inherit !important; letter-spacing: normal !important; text-transform: none !important; box-shadow: none !important; margin: 0 !important; }\n#stt-panel#stt-panel#stt-panel button { display: inline-flex !important; align-items: center !important; justify-content: center !important; gap: 6px !important; width: auto !important; min-height: 34px !important; padding: 0 13px !important; border: 1px solid var(--stt-border) !important; border-radius: 10px !important; background: var(--stt-wash) !important; color: inherit !important; font-size: .86em !important; font-weight: 600 !important; line-height: 1.2 !important; white-space: nowrap !important; cursor: pointer !important; transition: background .15s, color .15s, border-color .15s !important; }\n#stt-panel#stt-panel#stt-panel button:hover { background: var(--stt-wash2) !important; }\n#stt-panel#stt-panel#stt-panel button:active { background: var(--stt-wash3) !important; }\n#stt-panel#stt-panel#stt-panel button:focus-visible, #stt-panel#stt-panel#stt-panel input:focus-visible, #stt-panel#stt-panel#stt-panel select:focus-visible, #stt-panel#stt-panel#stt-panel textarea:focus-visible, #stt-panel#stt-panel#stt-panel [tabindex]:focus-visible { outline: 2px solid var(--stt-accent-line) !important; outline-offset: 2px !important; }\n#stt-panel#stt-panel#stt-panel .stt-action { min-height: 30px !important; padding: 0 10px !important; gap: 5px !important; font-size: .8em !important; flex-shrink: 0 !important; }\n#stt-panel#stt-panel#stt-panel .stt-action-icon { font-size: 1.15em !important; line-height: 1 !important; opacity: .85 !important; }\n\n/* Inputs */\n#stt-panel#stt-panel#stt-panel input:not([type=\"checkbox\"]):not([type=\"color\"]):not([type=\"file\"]):not([type=\"range\"]), #stt-panel#stt-panel#stt-panel select, #stt-panel#stt-panel#stt-panel textarea { width: 100% !important; min-width: 0 !important; min-height: 36px !important; padding: 6px 11px !important; border: 1px solid var(--stt-border) !important; border-radius: 10px !important; background-color: var(--stt-wash) !important; color: inherit !important; font-size: .92em !important; }\n#stt-panel#stt-panel#stt-panel input::placeholder, #stt-panel#stt-panel#stt-panel textarea::placeholder { color: var(--stt-faint) !important; opacity: .75 !important; }\n#stt-panel#stt-panel#stt-panel select { -webkit-appearance: none !important; appearance: none !important; padding-right: 32px !important; cursor: pointer !important; background-image: url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%23888' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 4.5 6 7.5 9 4.5'/%3E%3C/svg%3E\") !important; background-repeat: no-repeat !important; background-position: right 11px center !important; background-size: 12px !important; }\n#stt-panel#stt-panel#stt-panel select option { background: var(--stt-solid) !important; color: var(--stt-fg) !important; }\n#stt-panel#stt-panel#stt-panel input[type=\"color\"] { appearance: auto !important; width: 40px !important; height: 34px !important; padding: 2px !important; border: 1px solid var(--stt-border) !important; border-radius: 10px !important; background: transparent !important; cursor: pointer !important; }\n\n/* On/off switches and sliders: the tailor's own shape and point color, whatever the theme does */\n#stt-panel#stt-panel#stt-panel input[type=\"checkbox\"] { -webkit-appearance: none !important; appearance: none !important; position: relative !important; display: inline-block !important; flex: none !important; width: 40px !important; height: 23px !important; min-width: 40px !important; min-height: 23px !important; margin: 0 !important; padding: 0 !important; border: 0 !important; border-radius: 999px !important; outline: none !important; background: var(--stt-wash3) !important; box-shadow: none !important; filter: none !important; cursor: pointer !important; transition: background .18s ease !important; }\n#stt-panel#stt-panel#stt-panel input[type=\"checkbox\"]::before { content: \"\" !important; position: absolute !important; top: 3px !important; left: 3px !important; width: 17px !important; height: 17px !important; border-radius: 50% !important; background: #fff !important; box-shadow: 0 1px 2px rgba(0,0,0,.28) !important; transition: transform .18s ease !important; }\n#stt-panel#stt-panel#stt-panel input[type=\"checkbox\"]::after { content: none !important; display: none !important; }\n#stt-panel#stt-panel#stt-panel input[type=\"checkbox\"]:checked { background: var(--stt-point) !important; }\n#stt-panel#stt-panel#stt-panel input[type=\"checkbox\"]:checked::before { transform: translateX(17px) !important; }\n#stt-panel#stt-panel#stt-panel input[type=\"checkbox\"]:focus-visible { outline: 2px solid var(--stt-point-line) !important; outline-offset: 2px !important; }\n#stt-panel#stt-panel#stt-panel input[type=\"checkbox\"]:disabled { opacity: .45 !important; cursor: not-allowed !important; }\n#stt-panel#stt-panel#stt-panel input[hidden] { display: none !important; }\n#stt-panel#stt-panel#stt-panel .stt-font-slider > input[type=\"range\"] { -webkit-appearance: none !important; appearance: none !important; width: 100% !important; min-width: 0 !important; height: 22px !important; min-height: 22px !important; margin: 0 !important; padding: 0 !important; border: 0 !important; border-radius: 0 !important; outline: none !important; background: transparent !important; box-shadow: none !important; filter: none !important; accent-color: var(--stt-point) !important; cursor: pointer !important; }\n#stt-panel#stt-panel#stt-panel .stt-font-slider > input[type=\"range\"]::-webkit-slider-runnable-track { height: 6px !important; border: 0 !important; border-radius: 999px !important; background: linear-gradient(to right, var(--stt-point) var(--stt-fill, 0%), var(--stt-wash3) var(--stt-fill, 0%)) !important; }\n#stt-panel#stt-panel#stt-panel .stt-font-slider > input[type=\"range\"]::-moz-range-track { height: 6px !important; border: 0 !important; border-radius: 999px !important; background: var(--stt-wash3) !important; }\n#stt-panel#stt-panel#stt-panel .stt-font-slider > input[type=\"range\"]::-moz-range-progress { height: 6px !important; border-radius: 999px !important; background: var(--stt-point) !important; }\n#stt-panel#stt-panel#stt-panel .stt-font-slider > input[type=\"range\"]::-webkit-slider-thumb { -webkit-appearance: none !important; appearance: none !important; width: 18px !important; height: 18px !important; margin-top: -6px !important; border: 3px solid var(--stt-point) !important; border-radius: 50% !important; background: #fff !important; box-shadow: 0 1px 3px rgba(0,0,0,.3) !important; }\n#stt-panel#stt-panel#stt-panel .stt-font-slider > input[type=\"range\"]::-moz-range-thumb { width: 12px !important; height: 12px !important; border: 3px solid var(--stt-point) !important; border-radius: 50% !important; background: #fff !important; box-shadow: 0 1px 3px rgba(0,0,0,.3) !important; }\n#stt-panel#stt-panel#stt-panel .stt-font-slider > input[type=\"range\"]:focus-visible { outline: 2px solid var(--stt-point-line) !important; outline-offset: 2px !important; border-radius: 4px !important; }\n#stt-panel#stt-panel#stt-panel .stt-check { display: flex !important; align-items: center !important; justify-content: space-between !important; gap: 14px !important; min-height: 34px !important; margin: 0 !important; padding: 5px 0 !important; font-size: .92em !important; cursor: pointer !important; }\n#stt-panel#stt-panel#stt-panel .stt-check + :is(.stt-field, .stt-form-grid) { margin-top: 10px !important; }\n#stt-panel#stt-panel#stt-panel .stt-check:has(small) { align-items: flex-start !important; }\n#stt-panel#stt-panel#stt-panel .stt-check:has(small) > input { margin-top: 1px !important; }\n#stt-panel#stt-panel#stt-panel .stt-check-text { display: flex !important; flex-direction: column !important; gap: 1px !important; min-width: 0 !important; font-weight: 500 !important; word-break: keep-all !important; overflow-wrap: anywhere !important; }\n#stt-panel#stt-panel#stt-panel .stt-check-text small { font-size: .86em !important; font-weight: 400 !important; }\n\n/* Header and tabs */\n#stt-panel#stt-panel#stt-panel .stt-header { display: flex !important; align-items: center !important; gap: 12px !important; padding: 14px 14px 12px 18px !important; flex-shrink: 0 !important; }\n#stt-panel#stt-panel#stt-panel .stt-brand { display: flex !important; align-items: center !important; gap: 11px !important; min-width: 0 !important; margin-right: auto !important; }\n#stt-panel#stt-panel#stt-panel .stt-logo { display: grid !important; place-items: center !important; flex: none !important; width: 36px !important; height: 36px !important; border-radius: 11px !important; background: var(--stt-wash2) !important; }\n#stt-panel#stt-panel#stt-panel .stt-logo .stt-icon-preview { width: auto !important; flex: none !important; font-size: 1.05em !important; }\n#stt-panel#stt-panel#stt-panel .stt-brand > div { display: flex !important; align-items: center !important; gap: 8px !important; min-width: 0 !important; }\n#stt-panel#stt-panel#stt-panel .stt-version { padding: 1px 8px !important; border-radius: 999px !important; background: var(--stt-wash2) !important; color: var(--stt-muted) !important; font-size: .72em !important; font-weight: 600 !important; white-space: nowrap !important; }\n#stt-panel#stt-panel#stt-panel .stt-tabs { display: flex !important; align-items: center !important; gap: 4px !important; padding: 0 12px 10px !important; border-bottom: 1px solid var(--stt-border) !important; flex-shrink: 0 !important; overflow-x: auto !important; overflow-y: hidden !important; overscroll-behavior: contain !important; touch-action: pan-x !important; scrollbar-width: none !important; mask-image: linear-gradient(to right,transparent,#000 var(--stt-tabs-left,0px),#000 calc(100% - var(--stt-tabs-right,0px)),transparent) !important; -webkit-mask-image: linear-gradient(to right,transparent,#000 var(--stt-tabs-left,0px),#000 calc(100% - var(--stt-tabs-right,0px)),transparent) !important; }\n#stt-panel#stt-panel#stt-panel .stt-tabs::-webkit-scrollbar { display: none !important; }\n#stt-panel#stt-panel#stt-panel .stt-tabs button { flex: 0 0 auto !important; gap: 7px !important; min-height: 38px !important; padding: 0 13px !important; border: 0 !important; border-radius: 11px !important; background: transparent !important; color: var(--stt-muted) !important; font-size: .86em !important; }\n#stt-panel#stt-panel#stt-panel .stt-tabs button:hover { background: var(--stt-wash) !important; color: var(--stt-fg) !important; }\n#stt-panel#stt-panel#stt-panel .stt-tabs .stt-icon-preview { width: auto !important; flex: none !important; font-size: 1.02em !important; }\n#stt-panel#stt-panel#stt-panel .stt-tab-count { min-width: 1.6em !important; padding: 0 5px !important; border-radius: 999px !important; background: var(--stt-wash2) !important; font-size: .82em !important; font-weight: 600 !important; font-variant-numeric: tabular-nums !important; line-height: 1.5 !important; }\n#stt-panel#stt-panel#stt-panel .stt-tabs [data-stt-off=\"true\"] { opacity: .55 !important; }\n#stt-panel#stt-panel#stt-panel .stt-tabs [data-stt-off=\"true\"] .stt-tab-label { text-decoration: line-through !important; text-decoration-thickness: 1px !important; }\n\n/* Body and cards */\n#stt-panel#stt-panel#stt-panel .stt-content { flex: 1 1 auto !important; min-height: 0 !important; padding: 16px 18px !important; overflow-y: auto !important; overscroll-behavior: contain !important; scrollbar-width: thin !important; }\n#stt-panel#stt-panel#stt-panel .stt-duo { display: grid !important; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) !important; gap: 14px !important; align-items: stretch !important; margin: 0 0 14px !important; }\n#stt-panel#stt-panel#stt-panel .stt-duo > .stt-common { margin: 0 !important; height: 100% !important; }\n#stt-panel#stt-panel#stt-panel .stt-duo > .stt-duo-wide { grid-column: 1 / -1 !important; height: auto !important; }\n#stt-panel#stt-panel#stt-panel .stt-common { padding: 16px 18px !important; margin: 0 0 14px !important; border: 0 !important; border-radius: 14px !important; background: var(--stt-wash) !important; }\n#stt-panel#stt-panel#stt-panel .stt-common > h3 { margin: 0 0 10px !important; }\n#stt-panel#stt-panel#stt-panel .stt-common > h3 + .stt-check, #stt-panel#stt-panel#stt-panel .stt-common-heading + .stt-check { margin-top: -4px !important; }\n#stt-panel#stt-panel#stt-panel .stt-common p { margin: 4px 0 12px !important; color: var(--stt-muted) !important; font-size: .8em !important; line-height: 1.55 !important; }\n#stt-panel#stt-panel#stt-panel .stt-common p:empty, #stt-panel#stt-panel#stt-panel .stt-content p:empty { display: none !important; }\n#stt-panel#stt-panel#stt-panel .stt-common > *:last-child, #stt-panel#stt-panel#stt-panel .stt-common .stt-field:last-child { margin-bottom: 0 !important; }\n#stt-panel#stt-panel#stt-panel .stt-common-heading { display: flex !important; align-items: center !important; justify-content: space-between !important; gap: 12px !important; margin: -4px 0 12px !important; }\n#stt-panel#stt-panel#stt-panel .stt-common-fields { display: grid !important; grid-template-columns: 1fr 1fr 1.4fr !important; gap: 12px !important; }\n#stt-panel#stt-panel#stt-panel .stt-form-grid { display: grid !important; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) !important; gap: 0 16px !important; }\n#stt-panel#stt-panel#stt-panel .stt-common .stt-form-grid > .stt-field { margin-bottom: 12px !important; }\n#stt-panel#stt-panel#stt-panel .stt-common > .stt-form-grid:last-child { margin-bottom: -12px !important; }\n#stt-panel#stt-panel#stt-panel .stt-common .stt-field { margin-bottom: 10px !important; }\n#stt-panel#stt-panel#stt-panel .stt-recent-counts { display: grid !important; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) !important; gap: 0 12px !important; margin: 4px 0 2px 2px !important; padding: 2px 0 0 14px !important; border-left: 2px solid var(--stt-border) !important; }\n#stt-panel#stt-panel#stt-panel .stt-recent-counts > small { grid-column: 1 / -1 !important; margin: -2px 0 2px !important; }\n#stt-panel#stt-panel#stt-panel .stt-recent-counts > .stt-check { grid-column: 1 / -1 !important; margin-bottom: 6px !important; }\n#stt-panel#stt-panel#stt-panel .stt-recent-counts > .stt-field { margin-top: 0 !important; }\n#stt-panel#stt-panel#stt-panel .stt-off-note { display: block !important; margin: 0 0 14px !important; padding: 10px 14px !important; border-radius: 12px !important; background: var(--stt-warn-soft) !important; color: var(--stt-warn) !important; font-size: .86em !important; font-weight: 500 !important; }\n#stt-panel#stt-panel#stt-panel .stt-empty { display: flex !important; flex-direction: column !important; align-items: center !important; gap: 8px !important; padding: 44px 20px !important; color: var(--stt-muted) !important; font-size: .9em !important; text-align: center !important; }\n\n/* Item fields */\n#stt-panel#stt-panel#stt-panel .stt-field { display: flex !important; flex-direction: column !important; gap: 6px !important; width: 100% !important; margin: 0 0 14px !important; }\n#stt-panel#stt-panel#stt-panel .stt-field-label { font-size: .86em !important; font-weight: 600 !important; color: var(--stt-fg) !important; }\n#stt-panel#stt-panel#stt-panel .stt-color-control { display: flex !important; align-items: center !important; gap: 8px !important; }\n#stt-panel#stt-panel#stt-panel .stt-color-value { flex: 0 1 auto !important; min-width: 0 !important; color: var(--stt-muted) !important; font-size: .8em !important; font-variant-numeric: tabular-nums !important; white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important; }\n#stt-panel#stt-panel#stt-panel .stt-color-control button { min-height: 30px !important; padding: 0 10px !important; font-size: .8em !important; }\n\n/* Item list and item settings */\n#stt-panel#stt-panel#stt-panel .stt-toolbar { display: flex !important; gap: 8px !important; margin: 0 !important; }\n#stt-panel#stt-panel#stt-panel .stt-toolbar input { flex: 1 !important; }\n#stt-panel#stt-panel#stt-panel .stt-toolbar button { flex-shrink: 0 !important; }\n#stt-panel#stt-panel#stt-panel .stt-editor { display: grid !important; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) !important; gap: 14px !important; min-height: 320px !important; }\n#stt-panel#stt-panel#stt-panel .stt-list { display: flex !important; flex-direction: column !important; gap: 6px !important; min-height: 250px !important; max-height: 54dvh !important; overflow-y: auto !important; overscroll-behavior: contain !important; scrollbar-width: thin !important; scrollbar-color: var(--stt-wash3) transparent !important; }\n#stt-panel#stt-panel#stt-panel .stt-list::-webkit-scrollbar { width: 6px !important; }\n#stt-panel#stt-panel#stt-panel .stt-list::-webkit-scrollbar-track { background: transparent !important; }\n#stt-panel#stt-panel#stt-panel .stt-list::-webkit-scrollbar-thumb { background: var(--stt-wash3) !important; border-radius: 8px !important; }\n/* Opaque item background so the browser's drag image is not see-through */\n#stt-panel#stt-panel#stt-panel .stt-row { display: flex !important; align-items: center !important; gap: 10px !important; min-height: 48px !important; padding: 9px 12px !important; border: 0 !important; border-radius: 12px !important; background: color-mix(in srgb, var(--stt-fg) 5%, var(--stt-solid)) !important; cursor: pointer !important; transition: background .15s, box-shadow .15s !important; -webkit-user-drag: element !important; user-select: none !important; }\n#stt-panel#stt-panel#stt-panel .stt-row > span { -webkit-user-drag: none !important; }\n#stt-panel#stt-panel#stt-panel .stt-row:hover { background: color-mix(in srgb, var(--stt-fg) 9%, var(--stt-solid)) !important; }\n#stt-panel#stt-panel#stt-panel .stt-row[aria-pressed=\"true\"] { background: color-mix(in srgb, var(--stt-fg) 9%, var(--stt-solid)) !important; box-shadow: inset 0 0 0 1.5px var(--stt-accent-line) !important; }\n#stt-panel#stt-panel#stt-panel .stt-row.stt-drop { box-shadow: inset 0 2px 0 var(--stt-fg) !important; }\n#stt-panel#stt-panel#stt-panel .stt-row.stt-drop-after { box-shadow: inset 0 -2px 0 var(--stt-fg) !important; }\n#stt-panel#stt-panel#stt-panel .stt-grip { color: var(--stt-faint) !important; cursor: grab !important; font-size: 1.1em !important; }\n#stt-panel#stt-panel#stt-panel .stt-icon-preview { display: inline-flex !important; align-items: center !important; justify-content: center !important; width: 26px !important; flex: 0 0 26px !important; font-size: 1.15em !important; line-height: 1.2 !important; }\n#stt-panel#stt-panel#stt-panel .stt-row-copy { display: flex !important; flex-direction: column !important; flex: 1 !important; min-width: 0 !important; gap: 1px !important; }\n#stt-panel#stt-panel#stt-panel .stt-row-copy strong { font-size: .94em !important; font-weight: 600 !important; overflow-wrap: anywhere !important; }\n#stt-panel#stt-panel#stt-panel .stt-row-copy small { font-size: .76em !important; overflow-wrap: anywhere !important; }\n#stt-panel#stt-panel#stt-panel .stt-row-hide { flex: 0 0 auto !important; min-height: 28px !important; padding: 0 9px !important; border-color: transparent !important; background: transparent !important; color: var(--stt-muted) !important; font-size: .76em !important; }\n#stt-panel#stt-panel#stt-panel .stt-row-hide:hover { background: var(--stt-wash3) !important; color: var(--stt-fg) !important; }\n#stt-panel#stt-panel#stt-panel .stt-row-locked, #stt-panel#stt-panel#stt-panel .stt-locked-note { color: var(--stt-faint) !important; font-size: .76em !important; }\n#stt-panel#stt-panel#stt-panel .stt-detail { width: 100% !important; min-width: 0 !important; flex-shrink: 0 !important; align-self: start !important; padding: 16px 18px !important; border: 0 !important; border-radius: 14px !important; background: var(--stt-wash) !important; }\n#stt-panel#stt-panel#stt-panel .stt-detail-heading { display: flex !important; flex-wrap: wrap !important; align-items: center !important; gap: 8px !important; margin-bottom: 16px !important; overflow-wrap: anywhere !important; }\n#stt-panel#stt-panel#stt-panel .stt-detail-heading h3 { flex: 1 1 auto !important; min-width: 0 !important; font-size: 1em !important; }\n#stt-panel#stt-panel#stt-panel .stt-original { margin: -8px 0 14px !important; color: var(--stt-muted) !important; font-size: .78em !important; overflow-wrap: anywhere !important; }\n#stt-panel#stt-panel#stt-panel .stt-inline-actions { display: flex !important; flex: 0 0 auto !important; flex-wrap: nowrap !important; gap: 4px !important; margin: 0 0 0 auto !important; }\n#stt-panel#stt-panel#stt-panel .stt-state { margin-top: 16px !important; padding-top: 12px !important; border-top: 1px solid var(--stt-border) !important; }\n#stt-panel#stt-panel#stt-panel .stt-state summary { font-size: .88em !important; font-weight: 600 !important; cursor: pointer !important; }\n#stt-panel#stt-panel#stt-panel .stt-state p { margin: 8px 0 !important; color: var(--stt-muted) !important; font-size: .8em !important; line-height: 1.55 !important; }\n#stt-panel#stt-panel#stt-panel .stt-picker { margin: -4px 0 14px !important; padding: 10px !important; border: 1px solid var(--stt-border) !important; border-radius: 12px !important; }\n#stt-panel#stt-panel#stt-panel .stt-picker > input { margin-top: 8px !important; }\n#stt-panel#stt-panel#stt-panel .stt-icon-grid { display: grid !important; grid-template-columns: repeat(auto-fill, minmax(38px, 1fr)) !important; gap: 4px !important; max-height: 170px !important; margin: 8px 0 !important; overflow-y: auto !important; scrollbar-width: thin !important; }\n#stt-panel#stt-panel#stt-panel .stt-icon-grid .stt-icon-empty { display: block !important; grid-column: 1 / -1 !important; width: 100% !important; color: var(--stt-muted) !important; line-height: 1.5 !important; white-space: normal !important; overflow-wrap: anywhere !important; }\n#stt-panel#stt-panel#stt-panel .stt-icon-grid button { display: grid !important; place-items: center !important; min-width: 0 !important; min-height: 38px !important; padding: 6px 3px !important; border-color: transparent !important; border-radius: 9px !important; }\n#stt-panel#stt-panel#stt-panel .stt-icon-grid [aria-pressed=\"true\"] { background: var(--stt-wash3) !important; box-shadow: inset 0 0 0 1.5px var(--stt-accent-line) !important; }\n#stt-panel#stt-panel#stt-panel .stt-icon-more { display: block !important; width: 100% !important; min-height: 32px !important; padding: 0 10px !important; border-style: dashed !important; background: transparent !important; color: var(--stt-muted) !important; font-size: .8em !important; }\n\n/* Footer */\n#stt-panel#stt-panel#stt-panel .stt-live { flex-shrink: 0 !important; min-height: 0 !important; padding: 6px 18px !important; color: var(--stt-muted) !important; font-size: .8em !important; }\n#stt-panel#stt-panel#stt-panel .stt-live[data-error=\"true\"] { color: var(--stt-danger) !important; font-weight: 600 !important; }\n#stt-panel#stt-panel#stt-panel .stt-footer { display: flex !important; align-items: center !important; justify-content: space-between !important; gap: 10px !important; flex-shrink: 0 !important; padding: 12px 18px !important; border-top: 1px solid var(--stt-border) !important; }\n#stt-panel#stt-panel#stt-panel .stt-utilities, #stt-panel#stt-panel#stt-panel .stt-save-actions { display: flex !important; gap: 4px !important; flex-wrap: wrap !important; }\n#stt-panel#stt-panel#stt-panel .stt-utilities button { min-height: 32px !important; padding: 0 10px !important; border-color: transparent !important; background: transparent !important; color: var(--stt-muted) !important; font-size: .8em !important; font-weight: 500 !important; }\n#stt-panel#stt-panel#stt-panel .stt-utilities button:hover { background: var(--stt-wash2) !important; color: var(--stt-fg) !important; }\n/* Area on/off: stands out from other footer text buttons (leading dot = on; yellow background when off) */\n#stt-panel#stt-panel#stt-panel .stt-utilities .stt-area-toggle { gap: 7px !important; margin-right: 6px !important; padding: 0 12px 0 10px !important; border-color: var(--stt-border) !important; background: var(--stt-wash) !important; color: var(--stt-fg) !important; font-weight: 600 !important; }\n#stt-panel#stt-panel#stt-panel .stt-utilities .stt-area-toggle::before { content: \"\" !important; display: block !important; width: 7px !important; height: 7px !important; border-radius: 50% !important; background: currentColor !important; }\n#stt-panel#stt-panel#stt-panel .stt-utilities .stt-area-toggle:hover { background: var(--stt-wash3) !important; }\n#stt-panel#stt-panel#stt-panel .stt-utilities .stt-area-toggle[aria-pressed=\"true\"] { border-color: color-mix(in srgb, var(--stt-warn) 45%, transparent) !important; background: var(--stt-warn-soft) !important; color: var(--stt-warn) !important; }\n#stt-panel#stt-panel#stt-panel .stt-utilities .stt-area-toggle[aria-pressed=\"true\"]::before { background: transparent !important; box-shadow: inset 0 0 0 1.5px currentColor !important; }\n#stt-panel#stt-panel#stt-panel .stt-save-actions { flex-shrink: 0 !important; gap: 6px !important; }\n#stt-panel#stt-panel#stt-panel .stt-save-actions button { min-height: 36px !important; padding: 0 16px !important; }\n#stt-panel#stt-panel#stt-panel [hidden], #stt-panel#stt-panel#stt-panel .stt-live:empty { display: none !important; }\n\n@media (max-width: 880px) { #stt-panel#stt-panel#stt-panel .stt-duo { grid-template-columns: minmax(0, 1fr) !important; gap: 12px !important; margin-bottom: 12px !important; } }\n@media (max-width: 700px) {\n  #stt-panel#stt-panel#stt-panel { width: 100vw !important; max-width: none !important; height: 100dvh !important; max-height: none !important; margin: 0 !important; inset: 0 !important; border: 0 !important; border-radius: 0 !important; }\n  #stt-panel#stt-panel#stt-panel .stt-header { padding: max(12px, env(safe-area-inset-top)) 10px 10px 14px !important; gap: 8px !important; }\n  #stt-panel#stt-panel#stt-panel .stt-tabs { padding: 0 8px 8px !important; gap: 2px !important; }\n  #stt-panel#stt-panel#stt-panel .stt-tabs button { min-height: 36px !important; padding: 0 11px !important; }\n  #stt-panel#stt-panel#stt-panel .stt-content { padding: 12px !important; }\n  #stt-panel#stt-panel#stt-panel .stt-common, #stt-panel#stt-panel#stt-panel .stt-detail { padding: 14px !important; }\n  #stt-panel#stt-panel#stt-panel .stt-editor { grid-template-columns: minmax(0, 1fr) !important; min-height: 0 !important; gap: 10px !important; }\n  #stt-panel#stt-panel#stt-panel .stt-list { min-height: 0 !important; max-height: none !important; overflow: visible !important; }\n  #stt-panel#stt-panel#stt-panel .stt-row { min-height: 50px !important; padding: 9px 10px !important; }\n  #stt-panel#stt-panel#stt-panel .stt-common-fields { grid-template-columns: 1fr 1fr !important; }\n  #stt-panel#stt-panel#stt-panel .stt-common-fields > .stt-field:last-child { grid-column: 1 / -1 !important; }\n  #stt-panel#stt-panel#stt-panel .stt-form-grid { grid-template-columns: minmax(0, 1fr) !important; }\n  #stt-panel#stt-panel#stt-panel .stt-live { padding: 6px 12px !important; }\n}\n@media (max-width: 640px) {\n  #stt-panel#stt-panel#stt-panel .stt-action .stt-action-text { display: none !important; }\n  #stt-panel#stt-panel#stt-panel .stt-inline-actions .stt-action { width: 32px !important; padding: 0 !important; }\n  #stt-panel#stt-panel#stt-panel .stt-footer { flex-wrap: nowrap !important; gap: 8px !important; padding: 10px 10px max(10px, env(safe-area-inset-bottom)) !important; }\n  #stt-panel#stt-panel#stt-panel .stt-utilities { flex: 0 1 auto !important; flex-wrap: nowrap !important; gap: 0 !important; }\n  #stt-panel#stt-panel#stt-panel .stt-utilities button { padding: 0 6px !important; font-size: 11px !important; }\n  #stt-panel#stt-panel#stt-panel .stt-utilities .stt-area-toggle { gap: 5px !important; margin-right: 4px !important; padding: 0 9px 0 8px !important; }\n  #stt-panel#stt-panel#stt-panel .stt-save-actions { flex-wrap: nowrap !important; gap: 4px !important; margin-left: auto !important; }\n  #stt-panel#stt-panel#stt-panel .stt-save-actions button { padding: 0 11px !important; font-size: 12.5px !important; }\n}\n@media (max-width: 420px) { #stt-panel#stt-panel#stt-panel .stt-version { display: none !important; } }\n@media (prefers-reduced-motion: reduce) { #stt-panel#stt-panel#stt-panel button, #stt-panel#stt-panel#stt-panel .stt-row, #stt-panel#stt-panel#stt-panel input[type=\"checkbox\"], #stt-panel#stt-panel#stt-panel input[type=\"checkbox\"]::before { transition: none !important; } }\n/* QR bar */\n.stt-qr-shell { width:100%; min-width:0; flex:0 0 100%; order:1; }\n.stt-qr-reveal { display:grid; grid-template-rows:1fr; opacity:1; transition:grid-template-rows .18s ease,opacity .18s ease,transform .18s ease; transform:translateY(0); }\n.stt-qr-shell[data-open=\"false\"] .stt-qr-reveal { grid-template-rows:0fr; opacity:0; transform:translateY(8px); pointer-events:none; }\n.stt-qr-body { min-height:0; overflow-x:hidden; overflow-y:auto; overscroll-behavior:contain; }\n.stt-qr-row { display:flex; width:100%; min-width:0; align-items:center; gap:4px; }\n.stt-qr-viewport { flex:1 1 auto; min-width:0; overflow-x:auto; overscroll-behavior-x:contain; scrollbar-width:none; }\n.stt-qr-shell .qr--button { flex:0 0 auto!important; white-space:nowrap!important; }\n#send_form .stt-qr-row > .stt-qr-arrow { display:block!important; flex:0 0 18px!important; width:18px!important; min-width:18px!important; max-width:18px!important; min-height:36px!important; height:auto!important; margin:0!important; padding:0!important; border:0!important; border-radius:0!important; background:none!important; box-shadow:none!important; color:var(--SmartThemeBodyColor,inherit); font-size:24px!important; line-height:1!important; cursor:pointer; transform:none!important; }\n#send_form .stt-qr-row > .stt-qr-arrow::before, #send_form .stt-qr-row > .stt-qr-arrow::after { content:none!important; }\n.stt-qr-arrow:disabled { opacity:.3; cursor:default; }\n#send_form .stt-qr-row:not([data-overflow=\"true\"]) > .stt-qr-arrow { visibility:hidden!important; pointer-events:none; }\n@media (hover:none), (pointer:coarse), (max-width:600px) { #send_form .stt-qr-row > .stt-qr-arrow { display:none!important; } }\n@media (prefers-reduced-motion:reduce) { .stt-qr-reveal { transition:none; } }\nbody.reduced-motion .stt-qr-reveal { transition:none; }\n.stt-qr-shell[hidden], .stt-qr-row[hidden] { display:none!important; }\n.stt-qr-row.qr--buttons { display:flex!important; flex-wrap:nowrap!important; margin:0!important; padding:0!important; }\n.stt-qr-shell .qr--button.qr--hidden { display:none!important; }\n#send_form .stt-qr-viewport::-webkit-scrollbar { display:none!important; width:0!important; height:0!important; }\n#send_form .stt-qr-row { --stt-fade-left:0px; --stt-fade-right:0px; }\n#send_form .stt-qr-row[data-fade-left=\"true\"] { --stt-fade-left:16px; }\n#send_form .stt-qr-row[data-fade-right=\"true\"] { --stt-fade-right:16px; }\n#send_form .stt-qr-row[data-overflow=\"true\"] > .stt-qr-viewport { mask-image:linear-gradient(to right,transparent,#000 var(--stt-fade-left),#000 calc(100% - var(--stt-fade-right)),transparent); -webkit-mask-image:linear-gradient(to right,transparent,#000 var(--stt-fade-left),#000 calc(100% - var(--stt-fade-right)),transparent); }\n#send_form .stt-qr-toggle { display:inline-flex!important; align-items:center!important; justify-content:center!important; flex:0 0 28px!important; width:28px!important; min-width:28px!important; height:36px!important; min-height:36px!important; padding:0!important; margin:0!important; border:0!important; background:none!important; box-shadow:none!important; color:inherit!important; cursor:pointer!important; order:8!important; }\n#send_form .stt-qr-toggle[hidden] { display:none!important; }\n#send_form .stt-qr-toggle::before, #send_form .stt-qr-toggle::after { content:none!important; }\n#send_form .stt-qr-toggle svg { display:block!important; width:20px!important; height:20px!important; pointer-events:none!important; }\n#send_form .stt-qr-toggle[aria-expanded=\"true\"] svg { transform:rotate(180deg)!important; }\n#send_form .stt-qr-toggle:focus-visible { outline:2px solid currentColor!important; outline-offset:1px!important; }\n#send_form .stt-qr-toggle [data-stt-added-icon] { margin:0!important; display:inline-flex!important; align-items:center!important; justify-content:center!important; line-height:1!important; }\n#send_form .stt-qr-toggle[aria-expanded=\"true\"] [data-stt-added-icon] { transform:rotate(180deg)!important; }\n#send_form .stt-qr-toggle svg, #send_form .stt-qr-toggle path { color:inherit!important; }\n#send_form .stt-qr-toggle path { stroke:currentColor!important; fill:none!important; }\n@supports selector(::scroll-button(right)) {\n  #send_form #qr--bar[data-stt-qr-managed] .qr--buttons::scroll-button(*) { content:none!important; display:none!important; position-anchor:auto!important; }\n}\n/* QR bar buttons */\n#send_form#send_form :where(.stt-qr-shell:not([data-style=\"theme\"])) #qr--bar[data-stt-qr-managed] .qr--button {\n  border:1px solid color-mix(in srgb,var(--SmartThemeBodyColor,#777) 15%,transparent)!important;\n  background:color-mix(in srgb,var(--SmartThemeBodyColor,#777) 3%,var(--SmartThemeBlurTintColor,transparent))!important;\n  color:var(--SmartThemeBodyColor,inherit)!important;\n  font-family:inherit!important;\n  cursor:pointer!important;\n}\n#send_form#send_form :where(.stt-qr-shell:not([data-style=\"theme\"])) #qr--bar[data-stt-qr-managed] .qr--button:hover {\n  background:color-mix(in srgb,var(--SmartThemeBodyColor,#777) 7%,var(--SmartThemeBlurTintColor,transparent))!important;\n}\n#send_form#send_form#send_form .stt-qr-shell[data-style=\"pill\"] .qr--button { border-radius:999px!important; }\n#send_form#send_form#send_form .stt-qr-shell[data-style=\"rounded\"] .qr--button { border-radius:8px!important; }\n#send_form#send_form#send_form .stt-qr-shell[data-style=\"plain\"] .qr--button {\n  border-color:transparent!important; background:transparent!important; box-shadow:none!important;\n}\n#send_form#send_form#send_form .stt-qr-shell[data-style=\"plain\"] .qr--button:hover { background:color-mix(in srgb,var(--SmartThemeBodyColor,#777) 6%,transparent)!important; }\n#send_form#send_form :where(.stt-qr-shell:not([data-style=\"theme\"])) #qr--bar[data-stt-qr-managed] .qr--button > .qr--button-label {\n  color:inherit!important; font-size:inherit!important; line-height:inherit!important; font-weight:inherit!important;\n  margin:0!important; padding:0!important;\n}\n#extensions_settings#extensions_settings [data-stt-menu-icon],\n#extensions_settings2#extensions_settings2 [data-stt-menu-icon],\n#extensions_settings#extensions_settings [data-stt-menu-root-icon]::before,\n#extensions_settings2#extensions_settings2 [data-stt-menu-root-icon]::before {\n  position:absolute!important; inset-inline-start:var(--stt-inset,4px)!important;\n  top:50%!important; translate:0 -50%!important; transform:none!important;\n  width:var(--stt-slot,1.4em)!important; min-width:0!important;\n  margin:0!important; padding:0!important; text-align:center!important;\n}\n/* Composer layout: keep theme pseudo-elements from creating extra rows or space */\n#send_form#send_form #nonQRFormItems#nonQRFormItems[data-stt-input-layout]:not([data-stt-input-layout=\"theme\"])::before,\n#send_form#send_form #nonQRFormItems#nonQRFormItems[data-stt-input-layout]:not([data-stt-input-layout=\"theme\"])::after,\n#send_form#send_form #nonQRFormItems#nonQRFormItems[data-stt-input-layout]:not([data-stt-input-layout=\"theme\"]) > :is(#leftSendForm,#rightSendForm)::before,\n#send_form#send_form #nonQRFormItems#nonQRFormItems[data-stt-input-layout]:not([data-stt-input-layout=\"theme\"]) > :is(#leftSendForm,#rightSendForm)::after,\n#send_form#send_form #nonQRFormItems#nonQRFormItems[data-stt-input-layout] > #stt-input-spacer::before,\n#send_form#send_form #nonQRFormItems#nonQRFormItems[data-stt-input-layout] > #stt-input-spacer::after {\n  content:none!important; display:none!important;\n}\n#stt-panel#stt-panel#stt-panel select:disabled { opacity:.5!important; cursor:not-allowed!important; }\n/* A provider may write element.style.order itself. Keep our visual order in\n   a separate property instead of repeatedly overwriting the provider's value.\n   Scoped to the composer: an undocked/floating control is released immediately. */\n#send_form#send_form #nonQRFormItems#nonQRFormItems[data-stt-input-layout] [data-stt-input-order-managed][data-stt-input-order-managed] {\n  order:var(--stt-input-order,0)!important;\n}\n/* QR toggle: sample the native icon tone, without changing other controls.\n   Explicit icon colors remain inline !important and take precedence. */\n#send_form #stt-qr-toggle.stt-qr-toggle {\n  color:var(--stt-qr-color,var(--SmartThemeBodyColor,inherit))!important;\n  opacity:var(--stt-qr-opacity,.7)!important;\n}\n/* Desktop: both editor panes use the dialog's available height; small screens keep the\n   single-column layout with the detail inline. */\n@media (min-width:641px) {\n  #stt-panel#stt-panel#stt-panel .stt-content {\n    display:flex!important; flex-direction:column!important;\n }\n  #stt-panel#stt-panel#stt-panel [data-stt-common] {\n    flex-shrink:0!important;\n }\n  #stt-panel#stt-panel#stt-panel .stt-editor {\n    flex:1 1 auto!important;\n    grid-template-rows:auto minmax(0,1fr)!important;\n }\n  #stt-panel#stt-panel#stt-panel .stt-list {\n    min-height:0!important; max-height:none!important; align-self:stretch!important;\n }\n  #stt-panel#stt-panel#stt-panel .stt-detail {\n    min-height:0!important; max-height:100%!important; overflow-y:auto!important;\n    scrollbar-width:thin!important; scrollbar-color:#999 transparent!important;\n }\n}\n/* QR settings are a normal, top-aligned document, not an editor pane. */\n#stt-panel#stt-panel#stt-panel .stt-content[data-stt-area=\"qr\"] {\n  display:block!important; flex: 1 1 auto!important;\n  height:auto!important; min-height:0!important;\n  overflow-x:hidden!important; overflow-y:auto!important;\n  overflow-anchor:none!important; scroll-behavior:auto!important;\n}\n#stt-panel#stt-panel#stt-panel .stt-content[data-stt-area=\"qr\"] > [data-stt-common] {\n  display:block!important; height:auto!important; min-height:0!important;\n}\n/* Composer layout settings: desktop and mobile side by side; stacked on narrow screens */\n#stt-panel#stt-panel#stt-panel .stt-layout-grid { display:grid!important; grid-template-columns:minmax(0,1fr)!important; gap:0 14px!important; margin-top:4px!important; }\n#stt-panel#stt-panel#stt-panel .stt-layout-grid.stt-layout-split { grid-template-columns:minmax(0,1fr) minmax(0,1fr)!important; }\n#stt-panel#stt-panel#stt-panel .stt-layout-title { margin:0 0 8px!important; font:inherit!important; font-size:.84em!important; font-weight:700!important; color:var(--stt-fg)!important; }\n@media (max-width:600px) {\n  #stt-panel#stt-panel#stt-panel .stt-layout-grid.stt-layout-split { grid-template-columns:minmax(0,1fr)!important; }\n  #stt-panel#stt-panel#stt-panel .stt-layout-split > .stt-layout-col + .stt-layout-col { margin-top:14px!important; }\n}\n/* Wide screens: give the editor (item list and settings) a minimum height so long settings above\n   cannot squeeze it; on overflow the whole panel scrolls, continuing once a pane hits its end. */\n@media (min-width:641px) {\n  #stt-panel#stt-panel#stt-panel .stt-editor { min-height:min(440px,64dvh)!important; }\n  #stt-panel#stt-panel#stt-panel .stt-list,\n  #stt-panel#stt-panel#stt-panel .stt-detail { overscroll-behavior:auto!important; }\n}\n\n/* Search and refresh sit atop the left list pane; item settings run full height on the right */\n@media (min-width:641px) {\n  #stt-panel#stt-panel#stt-panel .stt-editor > .stt-toolbar { grid-column:1!important; grid-row:1!important; }\n  #stt-panel#stt-panel#stt-panel .stt-editor > .stt-list { grid-column:1!important; grid-row:2!important; }\n  #stt-panel#stt-panel#stt-panel .stt-editor > .stt-detail { grid-column:2!important; grid-row:1 / span 2!important; }\n}\n/* Reset: cards and items get a gray icon only, hidden when already default (red is for full reset only) */\n#stt-panel#stt-panel#stt-panel .stt-action.stt-reset { width: 30px !important; padding: 0 !important; color: var(--stt-muted) !important; }\n#stt-panel#stt-panel#stt-panel .stt-action.stt-reset .stt-action-text { display: none !important; }\n#stt-panel#stt-panel#stt-panel .stt-action.stt-reset:hover { color: var(--stt-fg) !important; }\n#stt-panel#stt-panel#stt-panel .stt-font-slider > button[data-idle] { visibility: hidden !important; }\n/* (i) info: pressing opens a speech bubble */\n#stt-panel#stt-panel#stt-panel .stt-label-line { display: inline-flex !important; align-items: center !important; gap: 6px !important; }\n#stt-panel#stt-panel#stt-panel h3.stt-label-line { display: flex !important; }\n#stt-panel#stt-panel#stt-panel #stt-panel-title { white-space: nowrap !important; }\n/* ⓘ and its speech bubble (same look as the author's other extensions) */\n#stt-panel#stt-panel#stt-panel button.stt-info { position: relative !important; display: inline-grid !important; place-items: center !important; flex: none !important; width: 20px !important; height: 20px !important; min-width: 20px !important; min-height: 20px !important; margin: -2px 0 !important; padding: 0 !important; border: 0 !important; border-radius: 50% !important; background: transparent !important; color: var(--stt-faint) !important; font-size: 13px !important; line-height: 1 !important; cursor: pointer !important; transition: color .15s ease, background-color .15s ease !important; }\n#stt-panel#stt-panel#stt-panel button.stt-info::before { content: \"\" !important; position: absolute !important; inset: -6px !important; }\n#stt-panel#stt-panel#stt-panel button.stt-info .stt-icon-preview { width: auto !important; flex: none !important; font-size: 13px !important; }\n#stt-panel#stt-panel#stt-panel button.stt-info:hover, #stt-panel#stt-panel#stt-panel button.stt-info[aria-expanded=\"true\"] { background: var(--stt-wash2) !important; color: var(--stt-fg) !important; }\n#stt-panel#stt-panel#stt-panel .stt-tip-pop { position: absolute !important; z-index: 20 !important; display: block !important; width: max-content !important; max-width: min(300px, calc(100% - 24px)) !important; margin: 0 !important; padding: 10px 13px !important; border: 1px solid var(--stt-border) !important; border-radius: 12px !important; background: var(--stt-solid) !important; box-shadow: 0 8px 24px rgba(0, 0, 0, .28) !important; color: var(--stt-fg) !important; font-size: 12.5px !important; font-weight: 400 !important; line-height: 1.6 !important; text-align: left !important; white-space: normal !important; word-break: keep-all !important; overflow-wrap: anywhere !important; animation: stt-pop .12s ease-out !important; }\n#stt-panel#stt-panel#stt-panel .stt-tip-pop::before { content: \"\" !important; position: absolute !important; top: -6px !important; left: var(--stt-arrow-x, 20px) !important; width: 10px !important; height: 10px !important; border-top: 1px solid var(--stt-border) !important; border-left: 1px solid var(--stt-border) !important; background: inherit !important; transform: translateX(-50%) rotate(45deg) !important; }\n#stt-panel#stt-panel#stt-panel .stt-tip-pop.stt-tip-above::before { top: auto !important; bottom: -6px !important; border: 0 !important; border-right: 1px solid var(--stt-border) !important; border-bottom: 1px solid var(--stt-border) !important; }\n@keyframes stt-pop { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }\n@media (prefers-reduced-motion: reduce) { #stt-panel#stt-panel#stt-panel .stt-tip-pop { animation: none !important; } }\n/* Wide screens: tabs share the full popup width (still scroll if they do not fit) */\n@media (min-width: 641px) { #stt-panel#stt-panel#stt-panel .stt-tabs button { flex: 1 0 auto !important; justify-content: center !important; } }\n/* Point color placements */\n#stt-panel#stt-panel#stt-panel .stt-logo { background: linear-gradient(135deg, color-mix(in srgb, #9d95f4 34%, transparent), color-mix(in srgb, #5d53d4 20%, transparent)) !important; color: var(--stt-point-text) !important; }\n#stt-panel#stt-panel#stt-panel .stt-tabs [aria-selected=\"true\"], #stt-panel#stt-panel#stt-panel .stt-tabs [aria-selected=\"true\"]:hover { background: var(--stt-point-soft) !important; color: var(--stt-point-text) !important; }\n#stt-panel#stt-panel#stt-panel .stt-tabs [aria-selected=\"true\"] .stt-tab-count { background: var(--stt-point-soft2) !important; }\n#stt-panel#stt-panel#stt-panel .stt-primary { border-color: var(--stt-point-line) !important; background: linear-gradient(var(--stt-point-soft2), var(--stt-point-soft2)), var(--stt-solid) !important; color: var(--stt-point-text) !important; }\n#stt-panel#stt-panel#stt-panel .stt-primary:hover { background: linear-gradient(color-mix(in srgb, var(--stt-point) 36%, transparent), color-mix(in srgb, var(--stt-point) 36%, transparent)), var(--stt-solid) !important; }\n#stt-panel#stt-panel#stt-panel .stt-row[aria-pressed=\"true\"] { box-shadow: inset 0 0 0 1.5px var(--stt-point-line) !important; }\n/* \"⋯\" menu: panel-wide options */\n#stt-panel#stt-panel#stt-panel .stt-more-wrap { position: relative !important; flex: none !important; }\n#stt-panel#stt-panel#stt-panel button.stt-more-button { position: relative !important; width: 36px !important; height: 36px !important; min-width: 36px !important; min-height: 36px !important; padding: 0 !important; border-color: transparent !important; background: transparent !important; color: var(--stt-muted) !important; }\n#stt-panel#stt-panel#stt-panel button.stt-more-button:hover, #stt-panel#stt-panel#stt-panel button.stt-more-button[aria-expanded=\"true\"] { background: var(--stt-wash2) !important; color: var(--stt-fg) !important; }\n#stt-panel#stt-panel#stt-panel button.stt-more-button .stt-icon-preview { width: auto !important; flex: none !important; font-size: 1.05em !important; }\n#stt-panel#stt-panel#stt-panel button.stt-more-button[data-off]::after { content: \"\" !important; position: absolute !important; top: 6px !important; right: 6px !important; width: 7px !important; height: 7px !important; border-radius: 50% !important; background: var(--stt-warn) !important; }\n#stt-panel#stt-panel#stt-panel .stt-more-menu { position: absolute !important; top: calc(100% + 6px) !important; right: 0 !important; z-index: 30 !important; display: block !important; width: max-content !important; min-width: 250px !important; max-width: min(320px, calc(100vw - 32px)) !important; padding: 6px !important; border: 1px solid var(--stt-border) !important; border-radius: 14px !important; background: var(--stt-solid) !important; box-shadow: none !important; }\n#stt-panel#stt-panel#stt-panel .stt-more-menu[hidden] { display: none !important; }\n#stt-panel#stt-panel#stt-panel :is(button, label).stt-more-item { display: flex !important; align-items: center !important; justify-content: flex-start !important; gap: 10px !important; width: 100% !important; min-height: 0 !important; margin: 0 !important; padding: 9px 10px !important; border: 0 !important; border-radius: 8px !important; background: transparent !important; color: var(--stt-fg) !important; font-size: .9em !important; font-weight: 600 !important; text-align: left !important; white-space: normal !important; }\n#stt-panel#stt-panel#stt-panel button.stt-more-item[hidden] { display: none !important; }\n#stt-panel#stt-panel#stt-panel button.stt-more-item:hover, #stt-panel#stt-panel#stt-panel button.stt-more-item:focus-visible { background: var(--stt-wash2) !important; }\n#stt-panel#stt-panel#stt-panel button.stt-more-item .stt-icon-preview { width: 16px !important; flex: 0 0 16px !important; font-size: 1em !important; color: var(--stt-muted) !important; }\n#stt-panel#stt-panel#stt-panel .stt-more-text { display: flex !important; flex-direction: column !important; gap: 1px !important; min-width: 0 !important; }\n#stt-panel#stt-panel#stt-panel .stt-more-text > small { color: var(--stt-muted) !important; font-size: .82em !important; font-weight: 400 !important; }\n#stt-panel#stt-panel#stt-panel button.stt-more-item[aria-pressed=\"true\"] .stt-icon-preview { color: var(--stt-point-text) !important; }\n#stt-panel#stt-panel#stt-panel button.stt-more-item.stt-more-danger, #stt-panel#stt-panel#stt-panel button.stt-more-item.stt-more-danger .stt-icon-preview { color: var(--stt-danger) !important; }\n#stt-panel#stt-panel#stt-panel button.stt-more-item.stt-more-danger .stt-more-text > small { color: color-mix(in srgb, var(--stt-danger) 70%, transparent) !important; }\n#stt-panel#stt-panel#stt-panel .stt-more-sep { height: 1px !important; margin: 4px 0 !important; background: var(--stt-border) !important; }\n#stt-panel#stt-panel#stt-panel .stt-header { position: relative !important; z-index: 5 !important; }\n#stt-panel#stt-panel#stt-panel label.stt-more-switch { cursor: pointer !important; }\n#stt-panel#stt-panel#stt-panel label.stt-more-switch .stt-icon-preview { width: 16px !important; flex: 0 0 16px !important; color: var(--stt-muted) !important; }\n#stt-panel#stt-panel#stt-panel label.stt-more-switch:hover { background: var(--stt-wash2) !important; }\n#stt-panel#stt-panel#stt-panel label.stt-more-switch > .stt-more-text { flex: 1 1 auto !important; }\n#stt-panel#stt-panel#stt-panel label.stt-more-switch > input[type=\"checkbox\"] { margin-left: 12px !important; }\n";
+  const PANEL_CSS = "@font-face { font-family: \"STT Phosphor\"; src: url(\"https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.1/src/regular/Phosphor.woff2\") format(\"woff2\"); font-weight: 400; font-style: normal; font-display: block; }\n/* SillyTavern menus and buttons */\n[data-stt-hidden][data-stt-hidden][data-stt-hidden][data-stt-hidden] { display: none !important; }\n[data-stt-ordered-menu]:not([hidden]):not(.displayNone):not([style*=\"display: none\"]):not([style*=\"display:none\"]) { display: flex !important; flex-direction: column; }\n[data-stt-no-glyph][data-stt-no-glyph][data-stt-no-glyph][data-stt-no-glyph]::before { content: \"\" !important; }\n[data-stt-source-color][data-stt-source-color][data-stt-source-color][data-stt-source-color]::before { color: var(--stt-source-color) !important; }\n[data-stt-glyph][data-stt-glyph][data-stt-glyph][data-stt-glyph]::before { content: var(--stt-glyph) !important; font-family: var(--stt-font) !important; font-weight: var(--stt-weight) !important; font-style: normal !important; }\n[data-stt-added-icon][data-stt-added-icon][data-stt-added-icon][data-stt-added-icon] { display: inline-block; margin-inline-end: .5em; pointer-events: none; }\n[data-stt-text] { pointer-events: none; }\n[data-stt-menu-row][data-stt-menu-row][data-stt-menu-row][data-stt-menu-row] { position: relative !important; padding-inline-start: calc(var(--stt-inset, 0px) + var(--stt-slot, 1.4em) + var(--stt-gap, .6em)) !important; text-indent: 0 !important; }\n[data-stt-menu-row][data-stt-menu-row][data-stt-menu-row][data-stt-menu-row][data-stt-menu-no-icon][data-stt-menu-no-icon][data-stt-menu-no-icon][data-stt-menu-no-icon] { padding-inline-start: var(--stt-inset, 4px) !important; }\n[data-stt-menu-label][data-stt-menu-label][data-stt-menu-label][data-stt-menu-label] { margin-inline-start: 0 !important; padding-inline-start: 0 !important; text-indent: 0 !important; }\n[data-stt-menu-icon][data-stt-menu-icon][data-stt-menu-icon][data-stt-menu-icon], [data-stt-menu-root-icon][data-stt-menu-root-icon][data-stt-menu-root-icon][data-stt-menu-root-icon]::before {\n  position: absolute !important; inset-inline-start: var(--stt-inset, 0px) !important;\n  top: 50% !important; translate: 0 -50% !important; width: var(--stt-slot, 1.4em) !important;\n  min-width: 0 !important; margin: 0 !important; padding: 0 !important; text-align: center !important;\n}\n[data-stt-message-button]:not([data-stt-hidden]) { display: inline-flex !important; align-items: center !important; justify-content: center !important; flex: 0 0 auto !important; align-self: center !important; margin: 0 !important; float: none !important; }\n[data-stt-button-glyph][data-stt-button-glyph][data-stt-button-glyph][data-stt-button-glyph]::before { position: static !important; margin: 0 !important; padding: 0 !important; text-indent: 0 !important; translate: none !important; }\n[data-stt-added-icon][data-stt-added-icon][data-stt-added-icon][data-stt-added-icon][data-stt-button-glyph][data-stt-button-glyph][data-stt-button-glyph][data-stt-button-glyph] { margin: 0 !important; }\n[data-stt-extension-layout] { display: grid !important; grid-template-columns: minmax(0, 1fr) !important; grid-template-rows: none !important; grid-auto-flow: row !important; grid-auto-rows: 1px !important; grid-auto-columns: minmax(0, 1fr) !important; align-items: start !important; align-content: start !important; column-gap: 10px !important; row-gap: 0 !important; }\n[data-stt-extension-item] { min-width: 0 !important; width: 100% !important; align-self: start !important; grid-area: auto !important; grid-column: auto !important; grid-row: auto !important; }\n[data-stt-extension-path] { display: contents !important; padding: 0 !important; margin: 0 !important; border: 0 !important; background: transparent !important; }\n#stt-open-wand { cursor: pointer; gap: .6em; align-items: center; order: 90000; }\n#stt-open-wand:focus-visible { outline: 2px solid currentColor; outline-offset: -2px; }\n/* Settings panel: follows theme colors; only the point color, warnings and reset get their own color */\n#stt-panel#stt-panel, #stt-panel#stt-panel :where(*) { all:revert!important; box-sizing:border-box!important; font-family:var(--stt-ui-font,inherit)!important; color:inherit!important; text-shadow:none!important; background-image:none!important; filter:none!important; }\n#stt-panel#stt-panel :where(*)::before, #stt-panel#stt-panel :where(*)::after { all:revert!important; content:none!important; }\n#stt-panel#stt-panel#stt-panel {\n  --stt-bg: var(--SmartThemeBlurTintColor, #1f1f1f) !important;\n  --stt-solid: var(--stt-bg) !important;\n  --stt-fg: var(--SmartThemeBodyColor, #eee) !important;\n  --stt-muted: color-mix(in srgb, var(--stt-fg) 64%, transparent) !important;\n  --stt-faint: color-mix(in srgb, var(--stt-fg) 42%, transparent) !important;\n  --stt-border: color-mix(in srgb, var(--stt-fg) 12%, transparent) !important;\n  --stt-wash: color-mix(in srgb, var(--stt-fg) 5%, transparent) !important;\n  --stt-wash2: color-mix(in srgb, var(--stt-fg) 9%, transparent) !important;\n  --stt-wash3: color-mix(in srgb, var(--stt-fg) 14%, transparent) !important;\n  --stt-accent: var(--stt-fg) !important;\n  --stt-accent-line: color-mix(in srgb, var(--stt-fg) 45%, transparent) !important;\n  --stt-line-strong: color-mix(in srgb, var(--stt-fg) 22%, transparent) !important;\n  /* Point color (fixed indigo): only marks \"where am I\" and the main action; everything else follows the theme. */\n  --stt-point: #7b72e9 !important;\n  --stt-point-text: color-mix(in srgb, var(--stt-point) 72%, var(--stt-fg)) !important;\n  --stt-point-soft: color-mix(in srgb, var(--stt-point) 16%, transparent) !important;\n  --stt-point-soft2: color-mix(in srgb, var(--stt-point) 26%, transparent) !important;\n  --stt-point-line: color-mix(in srgb, var(--stt-point) 50%, transparent) !important;\n  --stt-danger: color-mix(in srgb, #e5484d 80%, var(--stt-fg)) !important;\n  --stt-warn: color-mix(in srgb, #d99a2b 82%, var(--stt-fg)) !important;\n  --stt-warn-soft: color-mix(in srgb, #e3a33a 14%, transparent) !important;\n  box-sizing: border-box !important; color: var(--stt-fg) !important; background: var(--stt-solid) !important;\n  font-family: var(--stt-ui-font, inherit) !important; font-size: clamp(13px, var(--mainFontSize, 15px), 16px) !important; line-height: 1.45 !important;\n  width: min(960px, calc(100vw - 28px)) !important; max-width: 960px !important;\n  height: min(900px, calc(100dvh - 56px)) !important; max-height: calc(100dvh - 28px) !important;\n  border: 1px solid var(--stt-border) !important; border-radius: 18px !important; padding: 0 !important; margin: auto !important;\n  box-shadow: 0 18px 50px rgba(0,0,0,.22) !important; backdrop-filter: none !important; overflow: hidden !important;\n}\n/* Make translucent theme backgrounds opaque (no show-through behind the dialog, switch knobs, save button text) */\n@supports (color: rgb(from red r g b)) { #stt-panel#stt-panel#stt-panel { --stt-solid: rgb(from var(--stt-bg) r g b / 1) !important; } }\n#stt-panel#stt-panel#stt-panel[open] { display: flex !important; flex-direction: column !important; }\n#stt-panel#stt-panel#stt-panel:focus, #stt-panel#stt-panel#stt-panel:focus-visible { outline: none !important; }\n#stt-panel#stt-panel#stt-panel::backdrop { background:#0009 !important; backdrop-filter:none !important; }\n#stt-panel#stt-panel#stt-panel *, #stt-panel#stt-panel#stt-panel *::before, #stt-panel#stt-panel#stt-panel *::after { box-sizing: border-box !important; text-shadow: none !important; }\n#stt-panel#stt-panel#stt-panel h2, #stt-panel#stt-panel#stt-panel h3, #stt-panel#stt-panel#stt-panel h4, #stt-panel#stt-panel#stt-panel p { padding: 0 !important; margin: 0 !important; }\n#stt-panel#stt-panel#stt-panel h2 { font: inherit !important; font-size: 1.12em !important; font-weight: 700 !important; letter-spacing: -.02em !important; line-height: 1.3 !important; color: inherit !important; }\n#stt-panel#stt-panel#stt-panel h3 { font: inherit !important; font-size: .95em !important; font-weight: 700 !important; letter-spacing: -.01em !important; line-height: 1.35 !important; color: inherit !important; }\n#stt-panel#stt-panel#stt-panel small { font-size: .8em !important; line-height: 1.5 !important; color: var(--stt-muted) !important; }\n\n/* Buttons */\n#stt-panel#stt-panel#stt-panel button, #stt-panel#stt-panel#stt-panel input, #stt-panel#stt-panel#stt-panel select, #stt-panel#stt-panel#stt-panel textarea { font: inherit !important; letter-spacing: normal !important; text-transform: none !important; box-shadow: none !important; margin: 0 !important; }\n#stt-panel#stt-panel#stt-panel button { display: inline-flex !important; align-items: center !important; justify-content: center !important; gap: 6px !important; width: auto !important; min-height: 34px !important; padding: 0 13px !important; border: 1px solid var(--stt-border) !important; border-radius: 10px !important; background: var(--stt-wash) !important; color: inherit !important; font-size: .86em !important; font-weight: 600 !important; line-height: 1.2 !important; white-space: nowrap !important; cursor: pointer !important; transition: background .15s, color .15s, border-color .15s !important; }\n#stt-panel#stt-panel#stt-panel button:hover { background: var(--stt-wash2) !important; }\n#stt-panel#stt-panel#stt-panel button:active { background: var(--stt-wash3) !important; }\n#stt-panel#stt-panel#stt-panel button:focus-visible, #stt-panel#stt-panel#stt-panel input:focus-visible, #stt-panel#stt-panel#stt-panel select:focus-visible, #stt-panel#stt-panel#stt-panel textarea:focus-visible, #stt-panel#stt-panel#stt-panel [tabindex]:focus-visible { outline: 2px solid var(--stt-accent-line) !important; outline-offset: 2px !important; }\n#stt-panel#stt-panel#stt-panel .stt-action { min-height: 30px !important; padding: 0 10px !important; gap: 5px !important; font-size: .8em !important; flex-shrink: 0 !important; }\n#stt-panel#stt-panel#stt-panel .stt-action-icon { font-size: 1.15em !important; line-height: 1 !important; opacity: .85 !important; }\n\n/* Inputs */\n#stt-panel#stt-panel#stt-panel input:not([type=\"checkbox\"]):not([type=\"color\"]):not([type=\"file\"]):not([type=\"range\"]), #stt-panel#stt-panel#stt-panel select, #stt-panel#stt-panel#stt-panel textarea { width: 100% !important; min-width: 0 !important; min-height: 36px !important; padding: 6px 11px !important; border: 1px solid var(--stt-border) !important; border-radius: 10px !important; background-color: var(--stt-wash) !important; color: inherit !important; font-size: .92em !important; }\n#stt-panel#stt-panel#stt-panel input::placeholder, #stt-panel#stt-panel#stt-panel textarea::placeholder { color: var(--stt-faint) !important; opacity: .75 !important; }\n#stt-panel#stt-panel#stt-panel select { -webkit-appearance: none !important; appearance: none !important; padding-right: 32px !important; cursor: pointer !important; background-image: url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%23888' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 4.5 6 7.5 9 4.5'/%3E%3C/svg%3E\") !important; background-repeat: no-repeat !important; background-position: right 11px center !important; background-size: 12px !important; }\n#stt-panel#stt-panel#stt-panel select option { background: var(--stt-solid) !important; color: var(--stt-fg) !important; }\n#stt-panel#stt-panel#stt-panel input[type=\"color\"]::-webkit-color-swatch-wrapper { padding: 0 !important; }\n#stt-panel#stt-panel#stt-panel input[type=\"color\"]::-webkit-color-swatch { border: 0 !important; border-radius: 7px !important; }\n#stt-panel#stt-panel#stt-panel input[type=\"color\"]::-moz-color-swatch { border: 0 !important; border-radius: 7px !important; }\n#stt-panel#stt-panel#stt-panel input[type=\"color\"] { appearance: auto !important; width: 40px !important; height: 34px !important; padding: 2px !important; border: 1px solid var(--stt-border) !important; border-radius: 10px !important; background: transparent !important; cursor: pointer !important; }\n\n/* On/off switches and sliders: the tailor's own shape and point color, whatever the theme does */\n#stt-panel#stt-panel#stt-panel input[type=\"checkbox\"] { -webkit-appearance: none !important; appearance: none !important; position: relative !important; display: inline-block !important; flex: none !important; width: 40px !important; height: 23px !important; min-width: 40px !important; min-height: 23px !important; margin: 0 !important; padding: 0 !important; border: 0 !important; border-radius: 999px !important; outline: none !important; background: var(--stt-wash3) !important; box-shadow: none !important; filter: none !important; cursor: pointer !important; transition: background .18s ease !important; }\n#stt-panel#stt-panel#stt-panel input[type=\"checkbox\"]::before { content: \"\" !important; position: absolute !important; top: 3px !important; left: 3px !important; width: 17px !important; height: 17px !important; border-radius: 50% !important; background: #fff !important; box-shadow: 0 1px 2px rgba(0,0,0,.28) !important; transition: transform .18s ease !important; }\n#stt-panel#stt-panel#stt-panel input[type=\"checkbox\"]::after { content: none !important; display: none !important; }\n#stt-panel#stt-panel#stt-panel input[type=\"checkbox\"]:checked { background: var(--stt-point) !important; }\n#stt-panel#stt-panel#stt-panel input[type=\"checkbox\"]:checked::before { transform: translateX(17px) !important; }\n#stt-panel#stt-panel#stt-panel input[type=\"checkbox\"]:focus-visible { outline: 2px solid var(--stt-point-line) !important; outline-offset: 2px !important; }\n#stt-panel#stt-panel#stt-panel input[type=\"checkbox\"]:disabled { opacity: .45 !important; cursor: not-allowed !important; }\n#stt-panel#stt-panel#stt-panel input[hidden] { display: none !important; }\n#stt-panel#stt-panel#stt-panel .stt-font-slider > input[type=\"range\"] { -webkit-appearance: none !important; appearance: none !important; width: 100% !important; min-width: 0 !important; height: 22px !important; min-height: 22px !important; margin: 0 !important; padding: 0 !important; border: 0 !important; border-radius: 0 !important; outline: none !important; background: transparent !important; box-shadow: none !important; filter: none !important; accent-color: var(--stt-point) !important; cursor: pointer !important; }\n#stt-panel#stt-panel#stt-panel .stt-font-slider > input[type=\"range\"]::-webkit-slider-runnable-track { height: 6px !important; border: 0 !important; border-radius: 999px !important; background: linear-gradient(to right, var(--stt-point) var(--stt-fill, 0%), var(--stt-wash3) var(--stt-fill, 0%)) !important; }\n#stt-panel#stt-panel#stt-panel .stt-font-slider > input[type=\"range\"]::-moz-range-track { height: 6px !important; border: 0 !important; border-radius: 999px !important; background: var(--stt-wash3) !important; }\n#stt-panel#stt-panel#stt-panel .stt-font-slider > input[type=\"range\"]::-moz-range-progress { height: 6px !important; border-radius: 999px !important; background: var(--stt-point) !important; }\n#stt-panel#stt-panel#stt-panel .stt-font-slider > input[type=\"range\"]::-webkit-slider-thumb { -webkit-appearance: none !important; appearance: none !important; width: 18px !important; height: 18px !important; margin-top: -6px !important; border: 3px solid var(--stt-point) !important; border-radius: 50% !important; background: #fff !important; box-shadow: 0 1px 3px rgba(0,0,0,.3) !important; }\n#stt-panel#stt-panel#stt-panel .stt-font-slider > input[type=\"range\"]::-moz-range-thumb { width: 12px !important; height: 12px !important; border: 3px solid var(--stt-point) !important; border-radius: 50% !important; background: #fff !important; box-shadow: 0 1px 3px rgba(0,0,0,.3) !important; }\n#stt-panel#stt-panel#stt-panel .stt-font-slider > input[type=\"range\"]:focus-visible { outline: 2px solid var(--stt-point-line) !important; outline-offset: 2px !important; border-radius: 4px !important; }\n#stt-panel#stt-panel#stt-panel .stt-check { display: flex !important; align-items: center !important; justify-content: space-between !important; gap: 14px !important; min-height: 34px !important; margin: 0 !important; padding: 5px 0 !important; font-size: .92em !important; cursor: pointer !important; }\n#stt-panel#stt-panel#stt-panel .stt-check + :is(.stt-field, .stt-form-grid) { margin-top: 10px !important; }\n#stt-panel#stt-panel#stt-panel .stt-check:has(small) { align-items: flex-start !important; }\n#stt-panel#stt-panel#stt-panel .stt-check:has(small) > input { margin-top: 1px !important; }\n#stt-panel#stt-panel#stt-panel .stt-check-text { display: flex !important; flex-direction: column !important; gap: 1px !important; min-width: 0 !important; font-weight: 500 !important; word-break: keep-all !important; overflow-wrap: anywhere !important; }\n#stt-panel#stt-panel#stt-panel .stt-check-text small { font-size: .86em !important; font-weight: 400 !important; }\n\n/* Header and tabs */\n#stt-panel#stt-panel#stt-panel .stt-header { display: flex !important; align-items: center !important; gap: 12px !important; padding: 14px 14px 12px 18px !important; flex-shrink: 0 !important; }\n#stt-panel#stt-panel#stt-panel .stt-brand { display: flex !important; align-items: center !important; gap: 11px !important; min-width: 0 !important; margin-right: auto !important; }\n#stt-panel#stt-panel#stt-panel .stt-logo { display: grid !important; place-items: center !important; flex: none !important; width: 36px !important; height: 36px !important; border-radius: 11px !important; background: var(--stt-wash2) !important; }\n#stt-panel#stt-panel#stt-panel .stt-logo .stt-icon-preview { width: auto !important; flex: none !important; font-size: 1.05em !important; }\n#stt-panel#stt-panel#stt-panel .stt-brand > div { display: flex !important; align-items: center !important; gap: 8px !important; min-width: 0 !important; }\n#stt-panel#stt-panel#stt-panel .stt-version { padding: 1px 8px !important; border-radius: 999px !important; background: var(--stt-wash2) !important; color: var(--stt-muted) !important; font-size: .72em !important; font-weight: 600 !important; white-space: nowrap !important; }\n#stt-panel#stt-panel#stt-panel .stt-tabs { display: flex !important; align-items: center !important; gap: 4px !important; padding: 0 12px 10px !important; border-bottom: 1px solid var(--stt-border) !important; flex-shrink: 0 !important; overflow-x: auto !important; overflow-y: hidden !important; overscroll-behavior: contain !important; touch-action: pan-x !important; scrollbar-width: none !important; mask-image: linear-gradient(to right,transparent,#000 var(--stt-tabs-left,0px),#000 calc(100% - var(--stt-tabs-right,0px)),transparent) !important; -webkit-mask-image: linear-gradient(to right,transparent,#000 var(--stt-tabs-left,0px),#000 calc(100% - var(--stt-tabs-right,0px)),transparent) !important; }\n#stt-panel#stt-panel#stt-panel .stt-tabs::-webkit-scrollbar { display: none !important; }\n#stt-panel#stt-panel#stt-panel .stt-tabs button { flex: 0 0 auto !important; gap: 7px !important; min-height: 38px !important; padding: 0 13px !important; border: 0 !important; border-radius: 11px !important; background: transparent !important; color: var(--stt-muted) !important; font-size: .86em !important; }\n#stt-panel#stt-panel#stt-panel .stt-tabs button:hover { background: var(--stt-wash) !important; color: var(--stt-fg) !important; }\n#stt-panel#stt-panel#stt-panel .stt-tabs .stt-icon-preview { width: auto !important; flex: none !important; font-size: 1.02em !important; }\n#stt-panel#stt-panel#stt-panel .stt-tab-count { min-width: 1.6em !important; padding: 0 5px !important; border-radius: 999px !important; background: var(--stt-wash2) !important; font-size: .82em !important; font-weight: 600 !important; font-variant-numeric: tabular-nums !important; line-height: 1.5 !important; }\n#stt-panel#stt-panel#stt-panel .stt-tabs [data-stt-off=\"true\"] { opacity: .55 !important; }\n#stt-panel#stt-panel#stt-panel .stt-tabs [data-stt-off=\"true\"] .stt-tab-label { text-decoration: line-through !important; text-decoration-thickness: 1px !important; }\n\n/* Body and cards */\n#stt-panel#stt-panel#stt-panel .stt-content { flex: 1 1 auto !important; min-height: 0 !important; padding: 16px 18px !important; overflow-y: auto !important; overscroll-behavior: contain !important; scrollbar-width: thin !important; }\n#stt-panel#stt-panel#stt-panel .stt-duo { display: grid !important; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) !important; gap: 14px !important; align-items: stretch !important; margin: 0 0 14px !important; }\n#stt-panel#stt-panel#stt-panel .stt-duo > .stt-common { margin: 0 !important; height: 100% !important; }\n#stt-panel#stt-panel#stt-panel .stt-duo > .stt-duo-wide { grid-column: 1 / -1 !important; height: auto !important; }\n#stt-panel#stt-panel#stt-panel .stt-common { padding: 16px 18px !important; margin: 0 0 14px !important; border: 0 !important; border-radius: 14px !important; background: var(--stt-wash) !important; }\n#stt-panel#stt-panel#stt-panel .stt-common > h3 { margin: 0 0 10px !important; }\n#stt-panel#stt-panel#stt-panel .stt-common > h3 + .stt-check, #stt-panel#stt-panel#stt-panel .stt-common-heading + .stt-check { margin-top: -4px !important; }\n#stt-panel#stt-panel#stt-panel .stt-common p { margin: 4px 0 12px !important; color: var(--stt-muted) !important; font-size: .8em !important; line-height: 1.55 !important; }\n#stt-panel#stt-panel#stt-panel .stt-common p:empty, #stt-panel#stt-panel#stt-panel .stt-content p:empty { display: none !important; }\n#stt-panel#stt-panel#stt-panel .stt-common > *:last-child, #stt-panel#stt-panel#stt-panel .stt-common .stt-field:last-child { margin-bottom: 0 !important; }\n#stt-panel#stt-panel#stt-panel .stt-common-heading { display: flex !important; align-items: center !important; justify-content: space-between !important; gap: 12px !important; margin: -4px 0 12px !important; }\n#stt-panel#stt-panel#stt-panel .stt-common-fields { display: grid !important; grid-template-columns: 1fr 1fr 1.4fr !important; gap: 12px !important; }\n#stt-panel#stt-panel#stt-panel .stt-form-grid { display: grid !important; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) !important; gap: 0 16px !important; }\n#stt-panel#stt-panel#stt-panel .stt-common .stt-form-grid > .stt-field { margin-bottom: 12px !important; }\n#stt-panel#stt-panel#stt-panel .stt-common > .stt-form-grid:last-child { margin-bottom: -12px !important; }\n#stt-panel#stt-panel#stt-panel .stt-common .stt-field { margin-bottom: 10px !important; }\n#stt-panel#stt-panel#stt-panel .stt-recent-counts { display: grid !important; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) !important; gap: 0 12px !important; margin: 4px 0 2px 2px !important; padding: 2px 0 0 14px !important; border-left: 2px solid var(--stt-border) !important; }\n#stt-panel#stt-panel#stt-panel .stt-recent-counts > small { grid-column: 1 / -1 !important; margin: -2px 0 2px !important; }\n#stt-panel#stt-panel#stt-panel .stt-recent-counts > .stt-check { grid-column: 1 / -1 !important; margin-bottom: 6px !important; }\n#stt-panel#stt-panel#stt-panel .stt-recent-counts > .stt-field { margin-top: 0 !important; }\n#stt-panel#stt-panel#stt-panel .stt-off-note { display: block !important; margin: 0 0 14px !important; padding: 10px 14px !important; border-radius: 12px !important; background: var(--stt-warn-soft) !important; color: var(--stt-warn) !important; font-size: .86em !important; font-weight: 500 !important; }\n#stt-panel#stt-panel#stt-panel .stt-empty { display: flex !important; flex-direction: column !important; align-items: center !important; gap: 8px !important; padding: 44px 20px !important; color: var(--stt-muted) !important; font-size: .9em !important; text-align: center !important; }\n\n/* Item fields */\n#stt-panel#stt-panel#stt-panel .stt-field { display: flex !important; flex-direction: column !important; gap: 6px !important; width: 100% !important; margin: 0 0 14px !important; }\n#stt-panel#stt-panel#stt-panel .stt-field-label { font-size: .86em !important; font-weight: 600 !important; color: var(--stt-fg) !important; }\n#stt-panel#stt-panel#stt-panel .stt-color-control { display: flex !important; align-items: center !important; gap: 8px !important; }\n#stt-panel#stt-panel#stt-panel .stt-color-value { flex: 0 1 auto !important; min-width: 0 !important; color: var(--stt-muted) !important; font-size: .8em !important; font-variant-numeric: tabular-nums !important; white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important; }\n#stt-panel#stt-panel#stt-panel .stt-color-control button { min-height: 30px !important; padding: 0 10px !important; font-size: .8em !important; }\n\n/* Item list and item settings */\n#stt-panel#stt-panel#stt-panel .stt-toolbar { display: flex !important; gap: 8px !important; margin: 0 !important; }\n#stt-panel#stt-panel#stt-panel .stt-toolbar input { flex: 1 !important; }\n#stt-panel#stt-panel#stt-panel .stt-toolbar button { flex-shrink: 0 !important; }\n#stt-panel#stt-panel#stt-panel .stt-editor { display: grid !important; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) !important; gap: 14px !important; min-height: 320px !important; }\n#stt-panel#stt-panel#stt-panel .stt-list { display: flex !important; flex-direction: column !important; gap: 6px !important; min-height: 250px !important; max-height: 54dvh !important; overflow-y: auto !important; overscroll-behavior: contain !important; scrollbar-width: thin !important; scrollbar-color: var(--stt-wash3) transparent !important; }\n#stt-panel#stt-panel#stt-panel .stt-list::-webkit-scrollbar { width: 6px !important; }\n#stt-panel#stt-panel#stt-panel .stt-list::-webkit-scrollbar-track { background: transparent !important; }\n#stt-panel#stt-panel#stt-panel .stt-list::-webkit-scrollbar-thumb { background: var(--stt-wash3) !important; border-radius: 8px !important; }\n#stt-panel#stt-panel#stt-panel .stt-row { display: flex !important; align-items: center !important; gap: 10px !important; min-height: 48px !important; padding: 9px 12px !important; border: 0 !important; border-radius: 12px !important; background: color-mix(in srgb, var(--stt-fg) 5%, var(--stt-solid)) !important; cursor: pointer !important; transition: background .15s, box-shadow .15s, transform .16s ease !important; user-select: none !important; }\n#stt-panel#stt-panel#stt-panel .stt-row:hover { background: color-mix(in srgb, var(--stt-fg) 9%, var(--stt-solid)) !important; }\n#stt-panel#stt-panel#stt-panel .stt-row[aria-pressed=\"true\"] { background: color-mix(in srgb, var(--stt-fg) 9%, var(--stt-solid)) !important; box-shadow: inset 0 0 0 1.5px var(--stt-accent-line) !important; }\n#stt-panel#stt-panel#stt-panel .stt-grip { flex: none !important; display: inline-flex !important; align-items: center !important; justify-content: center !important; width: 26px !important; min-width: 26px !important; height: 34px !important; min-height: 34px !important; margin: -4px -6px -4px -6px !important; padding: 0 !important; border: 0 !important; border-radius: 8px !important; background: transparent !important; color: var(--stt-faint) !important; box-shadow: none !important; cursor: grab !important; font-size: 1.1em !important; line-height: 1 !important; touch-action: none !important; }\n#stt-panel#stt-panel#stt-panel .stt-grip:hover { background: var(--stt-wash3) !important; color: var(--stt-fg) !important; }\n#stt-panel#stt-panel#stt-panel .stt-grip:focus-visible { outline: 2px solid var(--stt-accent-line) !important; outline-offset: -2px !important; color: var(--stt-fg) !important; }\n#stt-panel#stt-panel#stt-panel .stt-sorting .stt-row { cursor: grabbing !important; }\n#stt-panel#stt-panel#stt-panel .stt-sorting .stt-row:hover { background: color-mix(in srgb, var(--stt-fg) 5%, var(--stt-solid)) !important; }\n#stt-panel#stt-panel#stt-panel .stt-sorting > .stt-row.stt-dragging { position: relative !important; z-index: 2 !important; transition: none !important; background: color-mix(in srgb, var(--stt-fg) 11%, var(--stt-solid)) !important; box-shadow: 0 8px 22px rgb(0 0 0 / 28%), inset 0 0 0 1.5px var(--stt-accent-line) !important; }\n#stt-panel#stt-panel#stt-panel .stt-sorting > .stt-row.stt-dragging .stt-grip { cursor: grabbing !important; color: var(--stt-fg) !important; }\n#stt-panel#stt-panel#stt-panel .stt-icon-preview { display: inline-flex !important; align-items: center !important; justify-content: center !important; width: 26px !important; flex: 0 0 26px !important; font-size: 1.15em !important; line-height: 1.2 !important; }\n#stt-panel#stt-panel#stt-panel .stt-row-copy { display: flex !important; flex-direction: column !important; flex: 1 !important; min-width: 0 !important; gap: 1px !important; }\n#stt-panel#stt-panel#stt-panel .stt-row-copy strong { font-size: .94em !important; font-weight: 600 !important; overflow-wrap: anywhere !important; }\n#stt-panel#stt-panel#stt-panel .stt-row-copy small { font-size: .76em !important; overflow-wrap: anywhere !important; }\n#stt-panel#stt-panel#stt-panel .stt-row-hide { flex: 0 0 auto !important; min-height: 28px !important; padding: 0 9px !important; border-color: transparent !important; background: transparent !important; color: var(--stt-muted) !important; font-size: .76em !important; }\n#stt-panel#stt-panel#stt-panel .stt-row-hide:hover { background: var(--stt-wash3) !important; color: var(--stt-fg) !important; }\n#stt-panel#stt-panel#stt-panel .stt-row-locked, #stt-panel#stt-panel#stt-panel .stt-locked-note { color: var(--stt-faint) !important; font-size: .76em !important; }\n#stt-panel#stt-panel#stt-panel .stt-detail { width: 100% !important; min-width: 0 !important; flex-shrink: 0 !important; align-self: start !important; padding: 16px 18px !important; border: 0 !important; border-radius: 14px !important; background: var(--stt-wash) !important; }\n#stt-panel#stt-panel#stt-panel .stt-detail-heading { display: flex !important; flex-wrap: wrap !important; align-items: center !important; gap: 8px !important; margin-bottom: 16px !important; overflow-wrap: anywhere !important; }\n#stt-panel#stt-panel#stt-panel .stt-detail-heading h3 { flex: 1 1 auto !important; min-width: 0 !important; font-size: 1em !important; }\n#stt-panel#stt-panel#stt-panel .stt-original { margin: -8px 0 14px !important; color: var(--stt-muted) !important; font-size: .78em !important; overflow-wrap: anywhere !important; }\n#stt-panel#stt-panel#stt-panel .stt-inline-actions { display: flex !important; flex: 0 0 auto !important; flex-wrap: nowrap !important; gap: 4px !important; margin: 0 0 0 auto !important; }\n#stt-panel#stt-panel#stt-panel .stt-state { margin-top: 16px !important; padding-top: 12px !important; border-top: 1px solid var(--stt-border) !important; }\n#stt-panel#stt-panel#stt-panel .stt-state summary { font-size: .88em !important; font-weight: 600 !important; cursor: pointer !important; }\n#stt-panel#stt-panel#stt-panel .stt-state p { margin: 8px 0 !important; color: var(--stt-muted) !important; font-size: .8em !important; line-height: 1.55 !important; }\n#stt-panel#stt-panel#stt-panel .stt-picker { margin: -4px 0 14px !important; padding: 10px !important; border: 1px solid var(--stt-border) !important; border-radius: 12px !important; }\n#stt-panel#stt-panel#stt-panel .stt-picker > input { margin-top: 8px !important; }\n#stt-panel#stt-panel#stt-panel .stt-icon-grid { display: grid !important; grid-template-columns: repeat(auto-fill, minmax(38px, 1fr)) !important; gap: 4px !important; max-height: 170px !important; margin: 8px 0 !important; overflow-y: auto !important; scrollbar-width: thin !important; }\n#stt-panel#stt-panel#stt-panel .stt-icon-grid .stt-icon-empty { display: block !important; grid-column: 1 / -1 !important; width: 100% !important; color: var(--stt-muted) !important; line-height: 1.5 !important; white-space: normal !important; overflow-wrap: anywhere !important; }\n#stt-panel#stt-panel#stt-panel .stt-icon-grid button { display: grid !important; place-items: center !important; min-width: 0 !important; min-height: 38px !important; padding: 6px 3px !important; border-color: transparent !important; border-radius: 9px !important; }\n#stt-panel#stt-panel#stt-panel .stt-icon-grid [aria-pressed=\"true\"] { background: var(--stt-wash3) !important; box-shadow: inset 0 0 0 1.5px var(--stt-accent-line) !important; }\n#stt-panel#stt-panel#stt-panel .stt-icon-more { display: block !important; width: 100% !important; min-height: 32px !important; padding: 0 10px !important; border-style: dashed !important; background: transparent !important; color: var(--stt-muted) !important; font-size: .8em !important; }\n\n/* Footer */\n#stt-panel#stt-panel#stt-panel .stt-live { flex-shrink: 0 !important; min-height: 0 !important; padding: 6px 18px !important; color: var(--stt-muted) !important; font-size: .8em !important; }\n#stt-panel#stt-panel#stt-panel .stt-live[data-error=\"true\"] { color: var(--stt-danger) !important; font-weight: 600 !important; }\n#stt-panel#stt-panel#stt-panel .stt-footer { display: flex !important; align-items: center !important; justify-content: space-between !important; gap: 10px !important; flex-shrink: 0 !important; padding: 12px 18px !important; border-top: 1px solid var(--stt-border) !important; }\n#stt-panel#stt-panel#stt-panel .stt-utilities, #stt-panel#stt-panel#stt-panel .stt-save-actions { display: flex !important; gap: 4px !important; flex-wrap: wrap !important; }\n#stt-panel#stt-panel#stt-panel .stt-utilities button { min-height: 32px !important; padding: 0 10px !important; border-color: transparent !important; background: transparent !important; color: var(--stt-muted) !important; font-size: .8em !important; font-weight: 500 !important; }\n#stt-panel#stt-panel#stt-panel .stt-utilities button:hover { background: var(--stt-wash2) !important; color: var(--stt-fg) !important; }\n/* Area on/off: stands out from other footer text buttons (leading dot = on; yellow background when off) */\n#stt-panel#stt-panel#stt-panel .stt-utilities .stt-area-toggle { gap: 7px !important; margin-right: 6px !important; padding: 0 12px 0 10px !important; border-color: var(--stt-border) !important; background: var(--stt-wash) !important; color: var(--stt-fg) !important; font-weight: 600 !important; }\n#stt-panel#stt-panel#stt-panel .stt-utilities .stt-area-toggle::before { content: \"\" !important; display: block !important; width: 7px !important; height: 7px !important; border-radius: 50% !important; background: currentColor !important; }\n#stt-panel#stt-panel#stt-panel .stt-utilities .stt-area-toggle:hover { background: var(--stt-wash3) !important; }\n#stt-panel#stt-panel#stt-panel .stt-utilities .stt-area-toggle[aria-pressed=\"true\"] { border-color: color-mix(in srgb, var(--stt-warn) 45%, transparent) !important; background: var(--stt-warn-soft) !important; color: var(--stt-warn) !important; }\n#stt-panel#stt-panel#stt-panel .stt-utilities .stt-area-toggle[aria-pressed=\"true\"]::before { background: transparent !important; box-shadow: inset 0 0 0 1.5px currentColor !important; }\n#stt-panel#stt-panel#stt-panel .stt-save-actions { flex-shrink: 0 !important; gap: 6px !important; }\n#stt-panel#stt-panel#stt-panel .stt-save-actions button { min-height: 36px !important; padding: 0 16px !important; }\n#stt-panel#stt-panel#stt-panel [hidden], #stt-panel#stt-panel#stt-panel .stt-live:empty { display: none !important; }\n\n@media (max-width: 880px) { #stt-panel#stt-panel#stt-panel .stt-duo { grid-template-columns: minmax(0, 1fr) !important; gap: 12px !important; margin-bottom: 12px !important; } }\n@media (max-width: 700px) {\n  #stt-panel#stt-panel#stt-panel { width: 100vw !important; max-width: none !important; height: 100dvh !important; max-height: none !important; margin: 0 !important; inset: 0 !important; border: 0 !important; border-radius: 0 !important; }\n  #stt-panel#stt-panel#stt-panel .stt-header { padding: max(12px, env(safe-area-inset-top)) 10px 10px 14px !important; gap: 8px !important; }\n  #stt-panel#stt-panel#stt-panel .stt-tabs { padding: 0 8px 8px !important; gap: 2px !important; }\n  #stt-panel#stt-panel#stt-panel .stt-tabs button { min-height: 36px !important; padding: 0 11px !important; }\n  #stt-panel#stt-panel#stt-panel .stt-content { padding: 12px !important; }\n  #stt-panel#stt-panel#stt-panel .stt-common, #stt-panel#stt-panel#stt-panel .stt-detail { padding: 14px !important; }\n  #stt-panel#stt-panel#stt-panel .stt-editor { grid-template-columns: minmax(0, 1fr) !important; min-height: 0 !important; gap: 10px !important; }\n  #stt-panel#stt-panel#stt-panel .stt-list { min-height: 0 !important; max-height: none !important; overflow: visible !important; }\n  #stt-panel#stt-panel#stt-panel .stt-row { min-height: 50px !important; padding: 9px 10px !important; }\n  #stt-panel#stt-panel#stt-panel .stt-common-fields { grid-template-columns: 1fr 1fr !important; }\n  #stt-panel#stt-panel#stt-panel .stt-common-fields > .stt-field:last-child { grid-column: 1 / -1 !important; }\n  #stt-panel#stt-panel#stt-panel .stt-form-grid { grid-template-columns: minmax(0, 1fr) !important; }\n  #stt-panel#stt-panel#stt-panel .stt-live { padding: 6px 12px !important; }\n}\n@media (max-width: 640px) {\n  #stt-panel#stt-panel#stt-panel .stt-action .stt-action-text { display: none !important; }\n  #stt-panel#stt-panel#stt-panel .stt-inline-actions .stt-action { width: 32px !important; padding: 0 !important; }\n  #stt-panel#stt-panel#stt-panel .stt-footer { flex-wrap: nowrap !important; gap: 8px !important; padding: 10px 10px max(10px, env(safe-area-inset-bottom)) !important; }\n  #stt-panel#stt-panel#stt-panel .stt-utilities { flex: 0 1 auto !important; flex-wrap: nowrap !important; gap: 0 !important; }\n  #stt-panel#stt-panel#stt-panel .stt-utilities button { padding: 0 6px !important; font-size: 11px !important; }\n  #stt-panel#stt-panel#stt-panel .stt-utilities .stt-area-toggle { gap: 5px !important; margin-right: 4px !important; padding: 0 9px 0 8px !important; }\n  #stt-panel#stt-panel#stt-panel .stt-save-actions { flex-wrap: nowrap !important; gap: 4px !important; margin-left: auto !important; }\n  #stt-panel#stt-panel#stt-panel .stt-save-actions button { padding: 0 11px !important; font-size: 12.5px !important; }\n}\n@media (max-width: 420px) { #stt-panel#stt-panel#stt-panel .stt-version { display: none !important; } }\n@media (prefers-reduced-motion: reduce) { #stt-panel#stt-panel#stt-panel button, #stt-panel#stt-panel#stt-panel .stt-row, #stt-panel#stt-panel#stt-panel input[type=\"checkbox\"], #stt-panel#stt-panel#stt-panel input[type=\"checkbox\"]::before { transition: none !important; } }\n/* QR bar */\n.stt-qr-shell { width:100%; min-width:0; flex:0 0 100%; order:1; }\n.stt-qr-reveal { display:grid; grid-template-rows:1fr; opacity:1; transition:grid-template-rows .18s ease,opacity .18s ease,transform .18s ease; transform:translateY(0); }\n.stt-qr-shell[data-open=\"false\"] .stt-qr-reveal { grid-template-rows:0fr; opacity:0; transform:translateY(8px); pointer-events:none; }\n.stt-qr-body { min-height:0; overflow-x:hidden; overflow-y:auto; overscroll-behavior:contain; }\n.stt-qr-row { display:flex; width:100%; min-width:0; align-items:center; gap:4px; }\n.stt-qr-viewport { flex:1 1 auto; min-width:0; overflow-x:auto; overscroll-behavior-x:contain; scrollbar-width:none; }\n.stt-qr-shell .qr--button { flex:0 0 auto!important; white-space:nowrap!important; }\n#send_form .stt-qr-row > .stt-qr-arrow { display:block!important; flex:0 0 18px!important; width:18px!important; min-width:18px!important; max-width:18px!important; min-height:36px!important; height:auto!important; margin:0!important; padding:0!important; border:0!important; border-radius:0!important; background:none!important; box-shadow:none!important; color:var(--SmartThemeBodyColor,inherit); font-size:24px!important; line-height:1!important; cursor:pointer; transform:none!important; }\n#send_form .stt-qr-row > .stt-qr-arrow::before, #send_form .stt-qr-row > .stt-qr-arrow::after { content:none!important; }\n.stt-qr-arrow:disabled { opacity:.3; cursor:default; }\n#send_form .stt-qr-row:not([data-overflow=\"true\"]) > .stt-qr-arrow { visibility:hidden!important; pointer-events:none; }\n@media (hover:none), (pointer:coarse), (max-width:600px) { #send_form .stt-qr-row > .stt-qr-arrow { display:none!important; } }\n@media (prefers-reduced-motion:reduce) { .stt-qr-reveal { transition:none; } }\nbody.reduced-motion .stt-qr-reveal { transition:none; }\n.stt-qr-shell[hidden], .stt-qr-row[hidden] { display:none!important; }\n.stt-qr-row.qr--buttons { display:flex!important; flex-wrap:nowrap!important; margin:0!important; padding:0!important; }\n.stt-qr-shell .qr--button.qr--hidden { display:none!important; }\n#send_form .stt-qr-viewport::-webkit-scrollbar { display:none!important; width:0!important; height:0!important; }\n#send_form .stt-qr-row { --stt-fade-left:0px; --stt-fade-right:0px; }\n#send_form .stt-qr-row[data-fade-left=\"true\"] { --stt-fade-left:16px; }\n#send_form .stt-qr-row[data-fade-right=\"true\"] { --stt-fade-right:16px; }\n#send_form .stt-qr-row[data-overflow=\"true\"] > .stt-qr-viewport { mask-image:linear-gradient(to right,transparent,#000 var(--stt-fade-left),#000 calc(100% - var(--stt-fade-right)),transparent); -webkit-mask-image:linear-gradient(to right,transparent,#000 var(--stt-fade-left),#000 calc(100% - var(--stt-fade-right)),transparent); }\n#send_form .stt-qr-toggle { display:inline-flex!important; align-items:center!important; justify-content:center!important; flex:0 0 28px!important; width:28px!important; min-width:28px!important; height:36px!important; min-height:36px!important; padding:0!important; margin:0!important; border:0!important; background:none!important; box-shadow:none!important; color:inherit!important; cursor:pointer!important; order:8!important; }\n#send_form .stt-qr-toggle[hidden] { display:none!important; }\n#send_form .stt-qr-toggle::before, #send_form .stt-qr-toggle::after { content:none!important; }\n#send_form .stt-qr-toggle svg { display:block!important; width:20px!important; height:20px!important; pointer-events:none!important; }\n#send_form .stt-qr-toggle[aria-expanded=\"true\"] svg { transform:rotate(180deg)!important; }\n#send_form .stt-qr-toggle:focus-visible { outline:2px solid currentColor!important; outline-offset:1px!important; }\n#send_form .stt-qr-toggle [data-stt-added-icon] { margin:0!important; display:inline-flex!important; align-items:center!important; justify-content:center!important; line-height:1!important; }\n#send_form .stt-qr-toggle[aria-expanded=\"true\"] [data-stt-added-icon] { transform:rotate(180deg)!important; }\n#send_form .stt-qr-toggle svg, #send_form .stt-qr-toggle path { color:inherit!important; }\n#send_form .stt-qr-toggle path { stroke:currentColor!important; fill:none!important; }\n@supports selector(::scroll-button(right)) {\n  #send_form #qr--bar[data-stt-qr-managed] .qr--buttons::scroll-button(*) { content:none!important; display:none!important; position-anchor:auto!important; }\n}\n/* QR bar buttons */\n#send_form#send_form :where(.stt-qr-shell:not([data-style=\"theme\"])) #qr--bar[data-stt-qr-managed] .qr--button {\n  border:1px solid color-mix(in srgb,var(--SmartThemeBodyColor,#777) 15%,transparent)!important;\n  background:color-mix(in srgb,var(--SmartThemeBodyColor,#777) 3%,var(--SmartThemeBlurTintColor,transparent))!important;\n  color:var(--SmartThemeBodyColor,inherit)!important;\n  font-family:inherit!important;\n  cursor:pointer!important;\n}\n#send_form#send_form :where(.stt-qr-shell:not([data-style=\"theme\"])) #qr--bar[data-stt-qr-managed] .qr--button:hover {\n  background:color-mix(in srgb,var(--SmartThemeBodyColor,#777) 7%,var(--SmartThemeBlurTintColor,transparent))!important;\n}\n#send_form#send_form#send_form .stt-qr-shell[data-style=\"pill\"] .qr--button { border-radius:999px!important; }\n#send_form#send_form#send_form .stt-qr-shell[data-style=\"rounded\"] .qr--button { border-radius:8px!important; }\n#send_form#send_form#send_form .stt-qr-shell[data-style=\"plain\"] .qr--button {\n  border-color:transparent!important; background:transparent!important; box-shadow:none!important;\n}\n#send_form#send_form#send_form .stt-qr-shell[data-style=\"plain\"] .qr--button:hover { background:color-mix(in srgb,var(--SmartThemeBodyColor,#777) 6%,transparent)!important; }\n#send_form#send_form :where(.stt-qr-shell:not([data-style=\"theme\"])) #qr--bar[data-stt-qr-managed] .qr--button > .qr--button-label {\n  color:inherit!important; font-size:inherit!important; line-height:inherit!important; font-weight:inherit!important;\n  margin:0!important; padding:0!important;\n}\n#extensions_settings#extensions_settings [data-stt-menu-icon],\n#extensions_settings2#extensions_settings2 [data-stt-menu-icon],\n#extensions_settings#extensions_settings [data-stt-menu-root-icon]::before,\n#extensions_settings2#extensions_settings2 [data-stt-menu-root-icon]::before {\n  position:absolute!important; inset-inline-start:var(--stt-inset,4px)!important;\n  top:50%!important; translate:0 -50%!important; transform:none!important;\n  width:var(--stt-slot,1.4em)!important; min-width:0!important;\n  margin:0!important; padding:0!important; text-align:center!important;\n}\n/* Composer layout: keep theme pseudo-elements from creating extra rows or space */\n#send_form#send_form #nonQRFormItems#nonQRFormItems[data-stt-input-layout]:not([data-stt-input-layout=\"theme\"])::before,\n#send_form#send_form #nonQRFormItems#nonQRFormItems[data-stt-input-layout]:not([data-stt-input-layout=\"theme\"])::after,\n#send_form#send_form #nonQRFormItems#nonQRFormItems[data-stt-input-layout]:not([data-stt-input-layout=\"theme\"]) > :is(#leftSendForm,#rightSendForm)::before,\n#send_form#send_form #nonQRFormItems#nonQRFormItems[data-stt-input-layout]:not([data-stt-input-layout=\"theme\"]) > :is(#leftSendForm,#rightSendForm)::after,\n#send_form#send_form #nonQRFormItems#nonQRFormItems[data-stt-input-layout] > #stt-input-spacer::before,\n#send_form#send_form #nonQRFormItems#nonQRFormItems[data-stt-input-layout] > #stt-input-spacer::after {\n  content:none!important; display:none!important;\n}\n#stt-panel#stt-panel#stt-panel select:disabled { opacity:.5!important; cursor:not-allowed!important; }\n/* A provider may write element.style.order itself. Keep our visual order in\n   a separate property instead of repeatedly overwriting the provider's value.\n   Scoped to the composer: an undocked/floating control is released immediately. */\n#send_form#send_form #nonQRFormItems#nonQRFormItems[data-stt-input-layout] [data-stt-input-order-managed][data-stt-input-order-managed] {\n  order:var(--stt-input-order,0)!important;\n}\n/* QR toggle: sample the native icon tone, without changing other controls.\n   Explicit icon colors remain inline !important and take precedence. */\n#send_form #stt-qr-toggle.stt-qr-toggle {\n  color:var(--stt-qr-color,var(--SmartThemeBodyColor,inherit))!important;\n  opacity:var(--stt-qr-opacity,.7)!important;\n}\n/* Desktop: both editor panes use the dialog's available height; small screens keep the\n   single-column layout with the detail inline. */\n@media (min-width:641px) {\n  #stt-panel#stt-panel#stt-panel .stt-content {\n    display:flex!important; flex-direction:column!important;\n }\n  #stt-panel#stt-panel#stt-panel [data-stt-common] {\n    flex-shrink:0!important;\n }\n  #stt-panel#stt-panel#stt-panel .stt-editor {\n    flex:1 1 auto!important;\n    grid-template-rows:auto minmax(0,1fr)!important;\n }\n  #stt-panel#stt-panel#stt-panel .stt-list {\n    min-height:0!important; max-height:none!important; align-self:stretch!important;\n }\n  #stt-panel#stt-panel#stt-panel .stt-detail {\n    min-height:0!important; max-height:100%!important; overflow-y:auto!important;\n    scrollbar-width:thin!important; scrollbar-color:#999 transparent!important;\n }\n}\n/* QR settings are a normal, top-aligned document, not an editor pane. */\n#stt-panel#stt-panel#stt-panel .stt-content[data-stt-area=\"qr\"] {\n  display:block!important; flex: 1 1 auto!important;\n  height:auto!important; min-height:0!important;\n  overflow-x:hidden!important; overflow-y:auto!important;\n  overflow-anchor:none!important; scroll-behavior:auto!important;\n}\n#stt-panel#stt-panel#stt-panel .stt-content[data-stt-area=\"qr\"] > [data-stt-common] {\n  display:block!important; height:auto!important; min-height:0!important;\n}\n/* Composer layout settings: desktop and mobile side by side; stacked on narrow screens */\n#stt-panel#stt-panel#stt-panel .stt-layout-grid { display:grid!important; grid-template-columns:minmax(0,1fr)!important; gap:0 14px!important; margin-top:4px!important; }\n#stt-panel#stt-panel#stt-panel .stt-layout-grid.stt-layout-split { grid-template-columns:minmax(0,1fr) minmax(0,1fr)!important; }\n#stt-panel#stt-panel#stt-panel .stt-layout-title { margin:0 0 8px!important; font:inherit!important; font-size:.84em!important; font-weight:700!important; color:var(--stt-fg)!important; }\n@media (max-width:600px) {\n  #stt-panel#stt-panel#stt-panel .stt-layout-grid.stt-layout-split { grid-template-columns:minmax(0,1fr)!important; }\n  #stt-panel#stt-panel#stt-panel .stt-layout-split > .stt-layout-col + .stt-layout-col { margin-top:14px!important; }\n}\n/* Wide screens: give the editor (item list and settings) a minimum height so long settings above\n   cannot squeeze it; on overflow the whole panel scrolls, continuing once a pane hits its end. */\n@media (min-width:641px) {\n  #stt-panel#stt-panel#stt-panel .stt-editor { min-height:min(440px,64dvh)!important; }\n  #stt-panel#stt-panel#stt-panel .stt-list,\n  #stt-panel#stt-panel#stt-panel .stt-detail { overscroll-behavior:auto!important; }\n}\n\n/* Search and refresh sit atop the left list pane; item settings run full height on the right */\n@media (min-width:641px) {\n  #stt-panel#stt-panel#stt-panel .stt-editor > .stt-toolbar { grid-column:1!important; grid-row:1!important; }\n  #stt-panel#stt-panel#stt-panel .stt-editor > .stt-list { grid-column:1!important; grid-row:2!important; }\n  #stt-panel#stt-panel#stt-panel .stt-editor > .stt-detail { grid-column:2!important; grid-row:1 / span 2!important; }\n}\n/* Reset: cards and items get a gray icon only, hidden when already default (red is for full reset only) */\n#stt-panel#stt-panel#stt-panel .stt-action.stt-reset { width: 30px !important; padding: 0 !important; color: var(--stt-muted) !important; }\n#stt-panel#stt-panel#stt-panel .stt-action.stt-reset .stt-action-text { display: none !important; }\n#stt-panel#stt-panel#stt-panel .stt-action.stt-reset:hover { color: var(--stt-fg) !important; }\n#stt-panel#stt-panel#stt-panel .stt-font-slider > button[data-idle] { visibility: hidden !important; }\n/* (i) info: pressing opens a speech bubble */\n#stt-panel#stt-panel#stt-panel .stt-label-line { display: inline-flex !important; align-items: center !important; gap: 6px !important; }\n#stt-panel#stt-panel#stt-panel h3.stt-label-line { display: flex !important; }\n#stt-panel#stt-panel#stt-panel #stt-panel-title { white-space: nowrap !important; }\n/* ⓘ and its speech bubble (same look as the author's other extensions) */\n#stt-panel#stt-panel#stt-panel button.stt-info { position: relative !important; display: inline-grid !important; place-items: center !important; flex: none !important; width: 20px !important; height: 20px !important; min-width: 20px !important; min-height: 20px !important; margin: -2px 0 !important; padding: 0 !important; border: 0 !important; border-radius: 50% !important; background: transparent !important; color: var(--stt-faint) !important; font-size: 13px !important; line-height: 1 !important; cursor: pointer !important; transition: color .15s ease, background-color .15s ease !important; }\n#stt-panel#stt-panel#stt-panel button.stt-info::before { content: \"\" !important; position: absolute !important; inset: -6px !important; }\n#stt-panel#stt-panel#stt-panel button.stt-info .stt-icon-preview { width: auto !important; flex: none !important; font-size: 13px !important; }\n#stt-panel#stt-panel#stt-panel button.stt-info:hover, #stt-panel#stt-panel#stt-panel button.stt-info[aria-expanded=\"true\"] { background: var(--stt-wash2) !important; color: var(--stt-fg) !important; }\n#stt-panel#stt-panel#stt-panel .stt-tip-pop { position: absolute !important; z-index: 20 !important; display: block !important; width: max-content !important; max-width: min(300px, calc(100% - 24px)) !important; margin: 0 !important; padding: 10px 13px !important; border: 1px solid var(--stt-line-strong) !important; border-radius: 12px !important; background: var(--stt-solid) !important; box-shadow: none !important; color: var(--stt-fg) !important; font-size: 12.5px !important; font-weight: 400 !important; line-height: 1.6 !important; text-align: left !important; white-space: normal !important; word-break: keep-all !important; overflow-wrap: anywhere !important; animation: stt-pop .12s ease-out !important; }\n#stt-panel#stt-panel#stt-panel .stt-tip-pop::before { content: \"\" !important; position: absolute !important; top: -6px !important; left: var(--stt-arrow-x, 20px) !important; width: 10px !important; height: 10px !important; border-top: 1px solid var(--stt-line-strong) !important; border-left: 1px solid var(--stt-line-strong) !important; background: inherit !important; transform: translateX(-50%) rotate(45deg) !important; }\n#stt-panel#stt-panel#stt-panel .stt-tip-pop.stt-tip-above::before { top: auto !important; bottom: -6px !important; border: 0 !important; border-right: 1px solid var(--stt-line-strong) !important; border-bottom: 1px solid var(--stt-line-strong) !important; }\n@keyframes stt-pop { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }\n@media (prefers-reduced-motion: reduce) { #stt-panel#stt-panel#stt-panel .stt-tip-pop { animation: none !important; } }\n/* Wide screens: tabs share the full popup width (still scroll if they do not fit) */\n@media (min-width: 641px) { #stt-panel#stt-panel#stt-panel .stt-tabs button { flex: 1 0 auto !important; justify-content: center !important; } }\n/* Point color placements */\n#stt-panel#stt-panel#stt-panel .stt-logo { background: linear-gradient(135deg, color-mix(in srgb, #9d95f4 34%, transparent), color-mix(in srgb, #5d53d4 20%, transparent)) !important; color: var(--stt-point-text) !important; }\n#stt-panel#stt-panel#stt-panel .stt-tabs [aria-selected=\"true\"], #stt-panel#stt-panel#stt-panel .stt-tabs [aria-selected=\"true\"]:hover { background: var(--stt-point-soft) !important; color: var(--stt-point-text) !important; }\n#stt-panel#stt-panel#stt-panel .stt-tabs [aria-selected=\"true\"] .stt-tab-count { background: var(--stt-point-soft2) !important; }\n#stt-panel#stt-panel#stt-panel .stt-primary { border-color: var(--stt-point-line) !important; background: linear-gradient(var(--stt-point-soft2), var(--stt-point-soft2)), var(--stt-solid) !important; color: var(--stt-point-text) !important; }\n#stt-panel#stt-panel#stt-panel .stt-primary:hover { background: linear-gradient(color-mix(in srgb, var(--stt-point) 36%, transparent), color-mix(in srgb, var(--stt-point) 36%, transparent)), var(--stt-solid) !important; }\n#stt-panel#stt-panel#stt-panel .stt-row[aria-pressed=\"true\"] { box-shadow: inset 0 0 0 1.5px var(--stt-point-line) !important; }\n/* \"⋯\" menu: panel-wide options */\n#stt-panel#stt-panel#stt-panel .stt-more-wrap { position: relative !important; flex: none !important; }\n#stt-panel#stt-panel#stt-panel button.stt-more-button { position: relative !important; width: 36px !important; height: 36px !important; min-width: 36px !important; min-height: 36px !important; padding: 0 !important; border-color: transparent !important; background: transparent !important; color: var(--stt-muted) !important; }\n#stt-panel#stt-panel#stt-panel button.stt-more-button:hover, #stt-panel#stt-panel#stt-panel button.stt-more-button[aria-expanded=\"true\"] { background: var(--stt-wash2) !important; color: var(--stt-fg) !important; }\n#stt-panel#stt-panel#stt-panel button.stt-more-button .stt-icon-preview { width: auto !important; flex: none !important; font-size: 1.05em !important; }\n#stt-panel#stt-panel#stt-panel button.stt-more-button[data-off]::after { content: \"\" !important; position: absolute !important; top: 6px !important; right: 6px !important; width: 7px !important; height: 7px !important; border-radius: 50% !important; background: var(--stt-warn) !important; }\n#stt-panel#stt-panel#stt-panel .stt-more-menu { position: absolute !important; top: calc(100% + 6px) !important; right: 0 !important; z-index: 30 !important; display: block !important; width: max-content !important; min-width: 250px !important; max-width: min(320px, calc(100vw - 32px)) !important; padding: 6px !important; border: 1px solid var(--stt-border) !important; border-radius: 14px !important; background: var(--stt-solid) !important; box-shadow: none !important; }\n#stt-panel#stt-panel#stt-panel .stt-more-menu[hidden] { display: none !important; }\n#stt-panel#stt-panel#stt-panel :is(button, label).stt-more-item { display: flex !important; align-items: center !important; justify-content: flex-start !important; gap: 10px !important; width: 100% !important; min-height: 0 !important; margin: 0 !important; padding: 9px 10px !important; border: 0 !important; border-radius: 8px !important; background: transparent !important; color: var(--stt-fg) !important; font-size: .9em !important; font-weight: 600 !important; text-align: left !important; white-space: normal !important; }\n#stt-panel#stt-panel#stt-panel button.stt-more-item[hidden] { display: none !important; }\n#stt-panel#stt-panel#stt-panel button.stt-more-item:hover, #stt-panel#stt-panel#stt-panel button.stt-more-item:focus-visible { background: var(--stt-wash2) !important; }\n#stt-panel#stt-panel#stt-panel button.stt-more-item .stt-icon-preview { width: 16px !important; flex: 0 0 16px !important; font-size: 1em !important; color: var(--stt-muted) !important; }\n#stt-panel#stt-panel#stt-panel .stt-more-text { display: flex !important; flex-direction: column !important; gap: 1px !important; min-width: 0 !important; }\n#stt-panel#stt-panel#stt-panel .stt-more-text > small { color: var(--stt-muted) !important; font-size: .82em !important; font-weight: 400 !important; }\n#stt-panel#stt-panel#stt-panel button.stt-more-item[aria-pressed=\"true\"] .stt-icon-preview { color: var(--stt-point-text) !important; }\n#stt-panel#stt-panel#stt-panel button.stt-more-item.stt-more-danger, #stt-panel#stt-panel#stt-panel button.stt-more-item.stt-more-danger .stt-icon-preview { color: var(--stt-danger) !important; }\n#stt-panel#stt-panel#stt-panel button.stt-more-item.stt-more-danger .stt-more-text > small { color: color-mix(in srgb, var(--stt-danger) 70%, transparent) !important; }\n#stt-panel#stt-panel#stt-panel .stt-more-sep { height: 1px !important; margin: 4px 0 !important; background: var(--stt-border) !important; }\n#stt-panel#stt-panel#stt-panel .stt-header { position: relative !important; z-index: 5 !important; }\n#stt-panel#stt-panel#stt-panel label.stt-more-switch { cursor: pointer !important; }\n#stt-panel#stt-panel#stt-panel label.stt-more-switch .stt-icon-preview { width: 16px !important; flex: 0 0 16px !important; color: var(--stt-muted) !important; }\n#stt-panel#stt-panel#stt-panel label.stt-more-switch:hover { background: var(--stt-wash2) !important; }\n#stt-panel#stt-panel#stt-panel label.stt-more-switch > .stt-more-text { flex: 1 1 auto !important; }\n#stt-panel#stt-panel#stt-panel label.stt-more-switch > input[type=\"checkbox\"] { margin-left: 12px !important; }\n/* Option buttons (two or three short choices): labels never wrap; the group wraps when narrow */\n#stt-panel#stt-panel#stt-panel .stt-choice { display: flex !important; flex-wrap: wrap !important; gap: 2px !important; width: 100% !important; padding: 3px !important; border: 0 !important; border-radius: 12px !important; background: var(--stt-wash2) !important; box-shadow: inset 0 0 0 1px var(--stt-border) !important; }\n#stt-panel#stt-panel#stt-panel .stt-choice > button { flex: 1 1 0 !important; min-width: max-content !important; min-height: 30px !important; padding: 0 12px !important; border: 0 !important; border-radius: 9px !important; background: transparent !important; box-shadow: none !important; color: var(--stt-muted) !important; font-size: .86em !important; font-weight: 600 !important; white-space: nowrap !important; }\n#stt-panel#stt-panel#stt-panel .stt-choice > button:hover { background: var(--stt-wash) !important; color: var(--stt-fg) !important; }\n/* Chosen option: a neutral raised tone (lighter on dark themes, darker on light ones) instead of the purple point */\n#stt-panel#stt-panel#stt-panel .stt-choice > button[aria-checked=\"true\"] { background: color-mix(in srgb, var(--stt-fg) 16%, var(--stt-solid)) !important; box-shadow: inset 0 0 0 1.5px var(--stt-accent-line) !important; color: var(--stt-fg) !important; font-weight: 700 !important; }\n#stt-panel#stt-panel#stt-panel .stt-choice > button:focus-visible { outline: 2px solid var(--stt-accent-line) !important; outline-offset: 1px !important; }\n/* Undo bar above the footer */\n#stt-panel#stt-panel#stt-panel .stt-undo { position: absolute !important; left: 50% !important; translate: -50% 0 !important; z-index: 40 !important; display: flex !important; align-items: center !important; gap: 12px !important; width: max-content !important; max-width: calc(100% - 24px) !important; padding: 6px 6px 6px 14px !important; border: 1px solid var(--stt-border) !important; border-radius: 12px !important; border-color: var(--stt-line-strong) !important; background: color-mix(in srgb, var(--stt-fg) 8%, var(--stt-solid)) !important; box-shadow: none !important; font-size: .86em !important; animation: stt-pop .16s ease-out !important; }\n#stt-panel#stt-panel#stt-panel .stt-undo-text { min-width: 0 !important; overflow: hidden !important; text-overflow: ellipsis !important; white-space: nowrap !important; }\n#stt-panel#stt-panel#stt-panel .stt-undo button { flex: none !important; min-height: 30px !important; padding: 0 14px !important; border: 0 !important; background: var(--stt-point) !important; color: #fff !important; font-weight: 700 !important; white-space: nowrap !important; }\n#stt-panel#stt-panel#stt-panel .stt-undo button:hover { background: color-mix(in srgb, var(--stt-point) 85%, #000) !important; }\n#stt-panel#stt-panel#stt-panel .stt-undo button:focus-visible { outline: 2px solid var(--stt-point-line) !important; outline-offset: 2px !important; }\n/* Row ⋯ button and its menu */\n#stt-panel#stt-panel#stt-panel .stt-row-more { flex: none !important; width: 30px !important; min-width: 30px !important; min-height: 30px !important; margin-right: -4px !important; padding: 0 !important; border-color: transparent !important; background: transparent !important; color: var(--stt-muted) !important; }\n#stt-panel#stt-panel#stt-panel .stt-row-more:hover, #stt-panel#stt-panel#stt-panel .stt-row-more[aria-expanded=\"true\"] { background: var(--stt-wash3) !important; color: var(--stt-fg) !important; }\n#stt-panel#stt-panel#stt-panel .stt-row-menu { right: auto !important; min-width: 180px !important; z-index: 35 !important; }\n#stt-panel#stt-panel#stt-panel button.stt-more-item:disabled { opacity: .4 !important; cursor: default !important; }\n/* Foldable section titles */\n#stt-panel#stt-panel#stt-panel .stt-common h3:has(> .stt-fold) { margin-bottom: 10px !important; }\n#stt-panel#stt-panel#stt-panel .stt-fold { display: flex !important; justify-content: flex-start !important; gap: 8px !important; width: 100% !important; min-height: 0 !important; margin: -4px 0 !important; padding: 4px 0 !important; border: 0 !important; background: transparent !important; font: inherit !important; font-weight: inherit !important; text-align: left !important; }\n#stt-panel#stt-panel#stt-panel .stt-common-heading .stt-fold { width: auto !important; }\n#stt-panel#stt-panel#stt-panel .stt-fold:focus-visible { outline: 2px solid var(--stt-accent-line) !important; outline-offset: 2px !important; border-radius: 6px !important; }\n#stt-panel#stt-panel#stt-panel .stt-fold-mark { flex: none !important; width: 7px !important; height: 7px !important; margin: 0 2px !important; border-right: 1.5px solid var(--stt-muted) !important; border-bottom: 1.5px solid var(--stt-muted) !important; rotate: 45deg !important; translate: 0 -2px !important; transition: rotate .15s ease !important; }\n#stt-panel#stt-panel#stt-panel [data-stt-folded] .stt-fold-mark { rotate: -45deg !important; translate: 0 0 !important; }\n#stt-panel#stt-panel#stt-panel section[data-stt-folded] > :not(h3):not(.stt-common-heading) { display: none !important; }\n#stt-panel#stt-panel#stt-panel section[data-stt-folded] > h3, #stt-panel#stt-panel#stt-panel section[data-stt-folded] > .stt-common-heading { margin-bottom: 0 !important; }\n#stt-panel#stt-panel#stt-panel section[data-stt-folded] > .stt-common-heading > :not(h3) { display: none !important; }\n/* Empty list */\n#stt-panel#stt-panel#stt-panel .stt-empty .stt-icon-preview { font-size: 1.6em !important; opacity: .55 !important; }\n#stt-panel#stt-panel#stt-panel .stt-empty strong { color: var(--stt-fg) !important; font-weight: 600 !important; overflow-wrap: anywhere !important; }\n#stt-panel#stt-panel#stt-panel .stt-empty small { font-size: .86em !important; }\n#stt-panel#stt-panel#stt-panel .stt-empty button { margin-top: 4px !important; white-space: nowrap !important; }\n/* Narrow panels: item settings in a bottom sheet */\n#stt-panel#stt-panel#stt-panel .stt-sheet-close { display: none !important; }\n#stt-panel#stt-panel#stt-panel .stt-sheet-backdrop { position: absolute !important; inset: 0 !important; z-index: 24 !important; display: block !important; background: rgb(0 0 0 / 48%) !important; animation: stt-fade .18s ease-out !important; }\n#stt-panel#stt-panel#stt-panel .stt-detail.stt-sheet { position: absolute !important; left: 0 !important; right: 0 !important; bottom: 0 !important; z-index: 25 !important; max-height: 82% !important; overflow-y: auto !important; overscroll-behavior: contain !important; padding: 22px 14px max(16px, env(safe-area-inset-bottom)) !important; border-radius: 18px 18px 0 0 !important; background: var(--stt-solid) !important; box-shadow: 0 -10px 34px rgb(0 0 0 / 35%) !important; outline: 0 !important; animation: stt-rise .2s ease-out !important; }\n#stt-panel#stt-panel#stt-panel .stt-detail.stt-sheet::before { content: \"\" !important; position: absolute !important; top: 8px !important; left: 50% !important; translate: -50% 0 !important; width: 38px !important; height: 4px !important; border-radius: 4px !important; background: var(--stt-wash3) !important; }\n#stt-panel#stt-panel#stt-panel .stt-sheet .stt-sheet-close { display: inline-flex !important; flex: none !important; width: 32px !important; min-width: 32px !important; min-height: 32px !important; padding: 0 !important; border-color: transparent !important; background: var(--stt-wash2) !important; }\n@keyframes stt-rise { from { transform: translateY(24px); opacity: .4; } to { transform: none; opacity: 1; } }\n@keyframes stt-fade { from { opacity: 0; } to { opacity: 1; } }\n@media (prefers-reduced-motion: reduce) { #stt-panel#stt-panel#stt-panel :is(.stt-undo, .stt-sheet-backdrop, .stt-detail.stt-sheet) { animation: none !important; } #stt-panel#stt-panel#stt-panel .stt-fold-mark { transition: none !important; } }\n/* Folded sections: title centred with equal space above and below */\n#stt-panel#stt-panel#stt-panel section.stt-common[data-stt-folded] { padding-top: 12px !important; padding-bottom: 12px !important; }\n#stt-panel#stt-panel#stt-panel section.stt-common[data-stt-folded] h3, #stt-panel#stt-panel#stt-panel section.stt-common[data-stt-folded] .stt-common-heading { margin: 0 !important; }\n#stt-panel#stt-panel#stt-panel section.stt-common[data-stt-folded] .stt-fold { margin: 0 !important; }\n/* Item move buttons (위로 · 아래로): icon only, the name stays in the tooltip and label */\n#stt-panel#stt-panel#stt-panel .stt-inline-actions .stt-action .stt-action-text { display: none !important; }\n#stt-panel#stt-panel#stt-panel .stt-inline-actions .stt-action { width: 32px !important; min-width: 32px !important; padding: 0 !important; }\n#stt-panel#stt-panel#stt-panel .stt-reload { flex: none !important; width: 36px !important; min-width: 36px !important; min-height: 36px !important; padding: 0 !important; }\n#stt-panel#stt-panel#stt-panel button.stt-icon-button { flex: none !important; padding: 0 !important; }\n#stt-panel#stt-panel#stt-panel .stt-action .stt-icon-preview, #stt-panel#stt-panel#stt-panel button.stt-icon-button .stt-icon-preview { font-size: .95em !important; }\n";
   const AREAS = { wand: '마법봉 메뉴', topbar: '상단바 메뉴', extensions: '확장 패널', input: '입력창 버튼', messages: '메시지 버튼' };
   const AREA_IDS = Object.keys(AREAS);
   const TAB_IDS = ['home', 'topbar', 'extensions', 'wand', 'input', 'qr', 'messages', 'fonts'];
@@ -1415,9 +1491,9 @@
       stroke: numberValue(m.stroke, ...FONT_LIMITS.stroke) ?? null, spacing: numberValue(m.spacing, ...FONT_LIMITS.spacing) ?? null, fade: numberValue(m.fade, ...FONT_LIMITS.fade) ?? 0 });
     const markIds = new Set();
     result.fonts.marks = [
-      ...MARK_PRESETS.map(p => ({ id: p.id, ...markLook(rawMarks.find(m => m.id === p.id) || {}) })),
+      ...MARK_PRESETS.map(p => { const raw = rawMarks.find(m => m.id === p.id) || {}; return { id: p.id, ...markLook(raw), off: raw.off === true, removed: raw.removed === true }; }),
       ...rawMarks.filter(m => /^u[0-9a-z]{1,16}$/.test(m.id) && !markIds.has(m.id) && markIds.add(m.id))
-        .map(m => ({ id: m.id, open: markChars(m.open), close: markChars(m.close), ...markLook(m) }))
+        .map(m => ({ id: m.id, open: markChars(m.open), close: markChars(m.close), ...markLook(m), off: m.off === true }))
         .filter(m => m.open && m.close).slice(0, MAX_MARK_RULES),
     ];
     for (const group of FONT_GROUPS) {
@@ -1427,6 +1503,10 @@
       result.fonts[group] = {
         family: validFamily(source.family),
         langs: Object.fromEntries(FONT_LANG_ORDER.map(lang => [lang, validFamily(langs[lang])])),
+        langLook: Object.fromEntries(FONT_LANG_ORDER.map(lang => {
+          const look = isRecord(source.langLook?.[lang]) ? source.langLook[lang] : {};
+          return [lang, { size: numberValue(look.size, ...FONT_LIMITS.size) ?? 100, stroke: numberValue(look.stroke, ...FONT_LIMITS.stroke) ?? null, spacing: numberValue(look.spacing, ...FONT_LIMITS.spacing) ?? null }];
+        })),
         size: pick('size', 100), lineHeight: pick('lineHeight', 100), stroke: legacyStroke && Number(source.stroke) === 0 ? null : pick('stroke', null), spacing: pick('spacing', null),
       };
     }
@@ -1520,6 +1600,7 @@
   let expandedKey = null;
   const expandedMarks = new Set();   // partial-font rules with 'adjust' expanded
   const expandedLangs = new Set();   // font groups (ui/chat) with per-language fonts expanded
+  const expandedLangLooks = new Set();   // 'group:lang' rows with per-language 'adjust' expanded
   const compactPanel = () => host.matchMedia?.('(max-width: 640px)').matches === true;
   // Same breakpoint as SillyTavern's mobile layout.
   const MOBILE_LAYOUT_QUERY = '(max-width: 1000px)';
@@ -1583,7 +1664,10 @@
   };
   // While the panel is open, live previews (fonts, home) follow the draft.
   const liveSettings = () => panel && draft ? effective(draft) : appliedSettings();
-  const previewDraft = () => { const e = effective(draft); fontController.sync(e.fonts); homeController.sync(e.home, e.fonts); topbarFold.sync(e.topbarFold); inputTextController.sync(e.inputText); };
+  // Typing (numbers, labels) and colour dragging refresh the page once the input pauses, not on every keystroke.
+  let previewLaterTimer = 0;
+  const previewLater = (ms = 250) => { host.clearTimeout(previewLaterTimer); previewLaterTimer = host.setTimeout(() => { previewLaterTimer = 0; if (draft) previewDraft(); }, ms); };
+  const previewDraft = () => { if (!draft) return; const e = effective(draft); fontController.sync(e.fonts); homeController.sync(e.home, e.fonts); topbarFold.sync(e.topbarFold); inputTextController.sync(e.inputText); };
   const editableSettings = () => draft || saved;
   const element = (tag, attrs = {}, text = '') => {
     const node = doc.createElement(tag);
@@ -3269,7 +3353,7 @@
       messageDigests = scanDigests;
     } catch (error) {
       console.error('[ST Tailor] Refresh failed', error);
-      report('일부 항목을 적용하지 못했습니다. 목록 새로고침을 눌러 주세요.', true);
+      report('일부 항목을 적용하지 못했습니다. 검색칸 옆 새로고침(↻)을 눌러 주세요.', true);
       // rollback() already stripped everything. The snapshot only tracks ST's
       // own DOM, so leaving it as-is would read as "nothing changed" and the
       // poll would never retry. Force the next tick to try again.
@@ -3295,9 +3379,19 @@
     return node;
   }
 
+  // Icon-only button (Font Awesome name); attrs should carry an aria-label.
+  function iconButton(icon, action, attrs = {}) {
+    const node = button('', action, attrs);
+    node.classList.add('stt-icon-button');
+    node.append(iconPreview(icon));
+    return node;
+  }
+
   function actionButton(label, icon, action, extraClass = '') {
     const control = button('', action, { class: `stt-action ${extraClass}`.trim(), 'aria-label': label, title: label });
-    control.append(element('span', { class: 'stt-action-icon', 'aria-hidden': 'true' }, icon), element('span', { class: 'stt-action-text' }, label));
+    const glyph = iconPreview(icon);   // a Font Awesome name, drawn like the panel's other icons
+    glyph.classList.add('stt-action-icon');
+    control.append(glyph, element('span', { class: 'stt-action-text' }, label));
     return control;
   }
 
@@ -3324,7 +3418,7 @@
       if (!Number.isFinite(typed)) { if (commit) number.value = text(current()); return; }
       const next = Math.min(max, Math.max(min, typed));
       if (commit) number.value = text(next);
-      if ((commit || next === typed) && next !== current()) onValue(next);
+      if ((commit || next === typed) && next !== current()) onValue(next, !commit);   // second argument: still typing
     };
     number.addEventListener('input', () => take(false));
     number.addEventListener('change', () => take(true));
@@ -3407,7 +3501,8 @@
   }
 
   function field(label, control, hint = '') {
-    const wrapper = element('label', { class: 'stt-field' });
+    const hasChoice = control?.classList?.contains('stt-choice') || !!control?.querySelector?.('.stt-choice');
+    const wrapper = element(hasChoice ? 'div' : 'label', { class: 'stt-field' });
     const { line, below } = labelLine(label, hint);
     line.classList.add('stt-field-label');
     wrapper.append(line, control);
@@ -3428,6 +3523,125 @@
     node.value = value;
     node.addEventListener('change', () => change(node.value)); return node;
   }
+  // Two or three short options as side-by-side buttons (same change(value) contract as select()).
+  // Arrow keys move between them like radio buttons; labels never wrap, the group wraps when narrow.
+  function choice(options, value, change, label) {
+    const group = element('div', { class: 'stt-choice', role: 'radiogroup', 'aria-label': label });
+    const buttons = options.map(([id, name]) => button(name, () => pick(id, true), { role: 'radio', 'data-value': id }));
+    const sync = () => buttons.forEach(b => { const on = b.dataset.value === group.dataset.value; b.setAttribute('aria-checked', String(on)); b.tabIndex = on ? 0 : -1; });
+    const pick = (id, notify) => { if (group.dataset.value === id) return; group.dataset.value = id; sync(); if (notify) change(id); };
+    group.addEventListener('keydown', event => {
+      const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[event.key];
+      if (!step) return;
+      event.preventDefault(); event.stopPropagation();
+      const at = buttons.findIndex(b => b.dataset.value === group.dataset.value);
+      const next = buttons[(at + step + buttons.length) % buttons.length];
+      next.focus(); pick(next.dataset.value, true);
+    });
+    group.dataset.value = String(value);
+    group.append(...buttons);
+    sync();
+    return group;
+  }
+
+  // "되돌리기" bar shown for a few seconds after hiding, resetting or moving something.
+  // `before` is a copy of the draft taken just before the change; `restore` redraws whatever else it touched.
+  let undoTimer = 0;
+  function offerUndo(message, before, restore = () => { previewDraft(); renderPanelBody(); }) {
+    if (!panel) return;
+    host.clearTimeout(undoTimer);
+    panel.querySelector('.stt-undo')?.remove();
+    const bar = element('div', { class: 'stt-undo', role: 'status' });
+    bar.append(element('span', { class: 'stt-undo-text' }, message), button('되돌리기', () => {
+      host.clearTimeout(undoTimer); bar.remove();
+      if (!panel) return;
+      draft = before;
+      restore();
+    }));
+    const footer = panel.querySelector('.stt-footer');
+    bar.style.setProperty('bottom', `${(footer?.offsetHeight || 0) + 10}px`, 'important');
+    // The snapshot is the whole draft, so the bar must not outlive the next change: any other press or edit dismisses it.
+    if (!panel.sttUndoWatch) {
+      panel.sttUndoWatch = true;
+      const dismiss = event => { if (!event.target.closest?.('.stt-undo')) { host.clearTimeout(undoTimer); panel?.querySelector('.stt-undo')?.remove(); } };
+      for (const type of ['pointerdown', 'click', 'input', 'change']) panel.addEventListener(type, dismiss, true);
+    }
+    panel.append(bar);
+    undoTimer = host.setTimeout(() => bar.remove(), 6000);
+  }
+
+  // Row "⋯" menu: move to the top or bottom, hide/show, reset the item's settings.
+  function closeRowMenu(focusAnchor = false) {
+    const menu = panel?.querySelector('.stt-row-menu');
+    if (!menu) return;
+    const anchor = menu.sttAnchor;
+    menu.remove();
+    anchor?.setAttribute('aria-expanded', 'false');
+    if (focusAnchor && anchor?.isConnected) anchor.focus();
+  }
+  function openRowMenu(anchor, record, fromKeyboard = false) {
+    const wasOpen = panel.querySelector('.stt-row-menu')?.sttAnchor === anchor;
+    closeRowMenu();
+    if (wasOpen) return;
+    const config = draft.areas[selectedArea].items[record.key] || {};
+    const name = NAMED_AREAS.has(selectedArea) && config.alias ? config.alias : record.name;
+    const order = ordered(selectedArea, draft).map(r => r.key);
+    const at = order.indexOf(record.key);
+    const menu = element('div', { class: 'stt-more-menu stt-row-menu', role: 'menu', 'aria-label': `${name} 메뉴` });
+    const item = (icon, label, action, disabled = false) => {
+      const node = button('', event => { event.stopPropagation(); closeRowMenu(); action(); }, { class: 'stt-more-item', role: 'menuitem' });
+      node.append(iconPreview(icon), element('span', { class: 'stt-more-text' }, label));
+      node.disabled = disabled;
+      menu.append(node);
+    };
+    const withUndo = (message, change) => { const before = clone(draft); change(); offerUndo(message, before); };
+    if (selectedArea !== 'topbar') {
+      item('fa-solid fa-angles-up', '맨 위로', () => withUndo(`‘${name}’ 맨 위로 옮김`, () => reorder(record.key, order.find(k => k !== record.key))), at <= 0);
+      item('fa-solid fa-angles-down', '맨 아래로', () => withUndo(`‘${name}’ 맨 아래로 옮김`, () => reorder(record.key, null)), at === order.length - 1);
+    }
+    if (!record.protected) item(config.hidden ? 'fa-solid fa-eye' : 'fa-solid fa-eye-slash', config.hidden ? '다시 보이기' : '숨기기', () => withUndo(`‘${name}’ ${config.hidden ? '다시 보임' : '숨김'}`, () => { patchItem(record.key, { hidden: !config.hidden }); if (record.key === selectedKey) renderDetail(); }));
+    item('fa-solid fa-rotate-left', '설정 원래대로', () => withUndo(`‘${name}’ 설정을 원래대로`, () => { delete draft.areas[selectedArea].items[record.key]; renderList(); }), !Object.keys(config).length);
+    menu.sttAnchor = anchor;
+    panel.append(menu);
+    anchor.setAttribute('aria-expanded', 'true');
+    // Below the button, right edges aligned; above it when there is no room.
+    const box = panel.getBoundingClientRect(), a = anchor.getBoundingClientRect();
+    const left = Math.max(12, Math.min(a.right - box.left - menu.offsetWidth, box.width - menu.offsetWidth - 12));
+    const below = a.bottom - box.top + 6, above = a.top - box.top - 6 - menu.offsetHeight;
+    menu.style.setProperty('left', `${left}px`, 'important');
+    menu.style.setProperty('top', `${below + menu.offsetHeight > box.height - 12 && above >= 12 ? above : below}px`, 'important');
+    // Focus moves into the menu only when it was opened from the keyboard (a mouse/touch press shows no focus ring).
+    if (fromKeyboard) menu.querySelector('button:not(:disabled)')?.focus();
+    menu.addEventListener('keydown', event => {
+      if (!['ArrowDown', 'ArrowUp'].includes(event.key)) return;
+      event.preventDefault();
+      const items = [...menu.querySelectorAll('button:not(:disabled)')];
+      const index = items.indexOf(doc.activeElement);
+      items[(index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus();
+    });
+  }
+
+  // Sections of the form tabs fold by their title; folded ones stay folded on this device.
+  const SECTION_FOLD_KEY = 'stt-folded-sections-v1';
+  const foldedSections = (() => { try { return new Set(JSON.parse(host.localStorage.getItem(SECTION_FOLD_KEY) || '[]')); } catch (_) { return new Set(); } })();
+  function makeFoldable(container) {
+    for (const section of container.querySelectorAll('section.stt-common')) {
+      const title = section.querySelector(':scope > h3, :scope > .stt-common-heading > h3');
+      if (!title || title.querySelector('.stt-fold')) continue;
+      const id = `${selectedArea}:${title.textContent.trim()}`;
+      const toggle = button('', () => {
+        const folded = !section.hasAttribute('data-stt-folded');
+        section.toggleAttribute('data-stt-folded', folded);
+        toggle.setAttribute('aria-expanded', String(!folded));
+        if (folded) foldedSections.add(id); else foldedSections.delete(id);
+        try { host.localStorage.setItem(SECTION_FOLD_KEY, JSON.stringify([...foldedSections])); } catch (_) {}
+      }, { class: 'stt-fold', 'aria-expanded': String(!foldedSections.has(id)) });
+      toggle.append(element('span', { class: 'stt-fold-mark', 'aria-hidden': 'true' }), ...title.childNodes);
+      title.append(toggle);
+      section.toggleAttribute('data-stt-folded', foldedSections.has(id));
+    }
+  }
+
   const FONT_LANGS = [['ko', '한국어'], ['en', '영어'], ['ja', '일본어'], ['zh', '중국어']];
   function fontOptions() {
     const faces = Object.entries(FONT_FACES);
@@ -3453,12 +3667,16 @@
   function patchItem(key, patch) {
     if (!draft) return;
     const items = draft.areas[selectedArea].items;
+    const hadAlias = !!items[key]?.alias;
     items[key] = { ...items[key], ...patch };
-    if (compactPanel() && panel?.querySelector('[data-stt-detail]')?.contains(doc.activeElement)) {
-      const row = [...panel.querySelectorAll('[data-key]')].find(n => n.dataset.key === key);
+    // Most item settings don't show in the list row, so the list isn't redrawn for them (typing a name or dragging a
+    // colour would otherwise rebuild every row per keystroke). Icon, hidden state or adding/removing a name do show.
+    if ('icon' in patch || 'hidden' in patch || ('alias' in patch && hadAlias !== !!items[key].alias)) { renderList(false); return; }
+    if ('alias' in patch) {
+      const row = [...(panel?.querySelectorAll('.stt-row[data-key]') || [])].find(n => n.dataset.key === key);
       const record = records[selectedArea].find(r => r.key === key);
-      if (row && record) row.querySelector('strong').textContent = items[key].alias || record.name;
-    } else renderList(false);
+      if (row && record) row.querySelector('strong').textContent = (NAMED_AREAS.has(selectedArea) && items[key].alias) || record.name;
+    }
   }
 
   function reorder(key, beforeKey) {
@@ -3477,6 +3695,97 @@
     const next = index + delta;
     if (index < 0 || next < 0 || next >= order.length) return;
     reorder(key, delta < 0 ? order[next] : order[next + 1]);
+  }
+
+  // Drag rows by their grip (mouse, touch, pen): the other rows slide aside while dragging and the list
+  // scrolls near its edges. ↑/↓ on a focused grip moves one step. Escape cancels a drag.
+  function bindSort(list) {
+    const rowsOf = () => [...list.children].filter(el => el.matches('.stt-row'));
+    const scrollerOf = el => {
+      for (let node = el.parentElement; node; node = node.parentElement) {
+        const style = host.getComputedStyle(node);
+        if (/(auto|scroll)/.test(style.overflowY) && node.scrollHeight > node.clientHeight) return node;
+      }
+      return doc.scrollingElement;
+    };
+    const refocus = key => [...list.querySelectorAll('.stt-row')].find(r => r.dataset.key === key)?.querySelector('.stt-grip')?.focus();
+    list.addEventListener('keydown', event => {
+      const grip = event.target.closest?.('.stt-grip');
+      if (!grip || !['ArrowUp', 'ArrowDown'].includes(event.key)) return;
+      event.preventDefault(); event.stopPropagation();
+      const key = grip.closest('.stt-row').dataset.key;
+      move(key, event.key === 'ArrowUp' ? -1 : 1);
+      refocus(key);
+    });
+    list.addEventListener('pointerdown', event => {
+      const grip = event.target.closest?.('.stt-grip');
+      if (!grip || event.button > 0 || !list.contains(grip)) return;
+      const row = grip.closest('.stt-row'), rows = rowsOf(), from = rows.indexOf(row);
+      if (from < 0 || rows.length < 2) return;
+      event.preventDefault();
+      const detail = list.querySelector('[data-stt-detail]');
+      if (detail) detail.hidden = true;   // the opened editor sits between rows on narrow panels
+      const scroller = scrollerOf(list), scroll0 = scroller.scrollTop, y0 = event.clientY;
+      const tops = rows.map(r => r.getBoundingClientRect().top), heights = rows.map(r => r.getBoundingClientRect().height);
+      const gap = rows.length > 1 ? tops[1] - tops[0] - heights[0] : 0;
+      const step = heights[from] + gap;
+      let to = from, lastY = y0, frame = 0, done = false;
+      row.classList.add('stt-dragging');
+      list.classList.add('stt-sorting');
+      try { grip.setPointerCapture(event.pointerId); } catch (_) {}
+      const layout = () => {
+        const y = lastY + scroller.scrollTop - scroll0;
+        row.style.setProperty('transform', `translateY(${y - y0}px)`, 'important');   // the panel's reset beats plain inline styles
+        to = 0;
+        rows.forEach((r, i) => { if (i !== from && tops[i] + heights[i] / 2 < y + (tops[from] + heights[from] / 2 - y0)) to++; });
+        rows.forEach((r, i) => {
+          if (i === from) return;
+          const shift = from < to && i > from && i <= to ? -step : from > to && i >= to && i < from ? step : 0;
+          if (shift) r.style.setProperty('transform', `translateY(${shift}px)`, 'important'); else r.style.removeProperty('transform');
+        });
+      };
+      const autoScroll = () => {
+        if (!row.isConnected) { finish(false); return; }   // the list was redrawn under the drag
+        const box = scroller === doc.scrollingElement ? { top: 0, bottom: host.innerHeight } : scroller.getBoundingClientRect();
+        const edge = 44, speed = lastY < box.top + edge ? -9 : lastY > box.bottom - edge ? 9 : 0;
+        if (speed) { scroller.scrollTop += speed; layout(); }
+        frame = host.requestAnimationFrame(autoScroll);
+      };
+      const onMove = ev => { lastY = ev.clientY; layout(); };
+      const finish = commit => {
+        if (done) return;
+        done = true;
+        host.cancelAnimationFrame(frame);
+        grip.removeEventListener('pointermove', onMove);
+        grip.removeEventListener('pointerup', onUp);
+        grip.removeEventListener('pointercancel', onCancel);
+        grip.removeEventListener('lostpointercapture', onCancel);
+        doc.removeEventListener('keydown', onKey, true);
+        rows.forEach(r => r.style.removeProperty('transform'));
+        row.classList.remove('stt-dragging');
+        list.classList.remove('stt-sorting');
+        if (!commit || to === from) { if (detail) positionDetail(); return; }
+        const key = row.dataset.key;
+        const visible = rows.map(r => r.dataset.key).filter(k => k !== key);
+        visible.splice(to, 0, key);
+        let before = visible[to + 1];
+        if (!before) {
+          // Dropped last among the shown rows (a search may hide some): go right after the row above it.
+          const full = ordered(selectedArea, draft).map(r => r.key).filter(k => k !== key);
+          before = full[full.indexOf(visible[to - 1]) + 1] || null;
+        }
+        reorder(key, before);
+      };
+      const onUp = () => finish(true);
+      const onCancel = () => finish(false);
+      const onKey = ev => { if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); finish(false); } };
+      grip.addEventListener('pointermove', onMove);
+      grip.addEventListener('pointerup', onUp);
+      grip.addEventListener('pointercancel', onCancel);
+      grip.addEventListener('lostpointercapture', onCancel);
+      doc.addEventListener('keydown', onKey, true);
+      frame = host.requestAnimationFrame(autoScroll);
+    });
   }
 
   function iconPreview(value, original) {
@@ -3509,18 +3818,25 @@
     updateTabFade();
     if (FORM_TABS.has(selectedArea)) return;
     const list = panel.querySelector('[data-stt-list]');
+    if (!list.sttSortBound) { list.sttSortBound = true; bindSort(list); }
     const scroll = list.scrollTop;
     const detail = panel.querySelector('[data-stt-detail]');
     if (list.contains(detail)) panel.querySelector('.stt-editor').append(detail);
     list.replaceChildren();
     const items = ordered(selectedArea, draft).filter(r => `${r.name} ${draft.areas[selectedArea].items[r.key]?.alias || ''}`.toLowerCase().includes(query.toLowerCase()));
     if (!records[selectedArea].some(r => r.key === selectedKey)) selectedKey = items[0]?.key || null;
-    if (!items.length) list.append(element('div', { class: 'stt-empty' }, query ? '검색 결과가 없습니다.' : '표시할 항목이 없습니다.'));
+    if (!items.length) {
+      const empty = element('div', { class: 'stt-empty' });
+      empty.append(iconPreview(query ? 'fa-solid fa-magnifying-glass' : 'fa-solid fa-box-open'), element('strong', {}, query ? `‘${query}’ 항목이 없습니다` : '표시할 항목이 없습니다'));
+      if (query) empty.append(button('검색 지우기', () => { query = ''; const box = panel.querySelector('[data-stt-search]'); box.value = ''; renderList(false); box.focus(); }));
+      else empty.append(element('small', {}, '검색칸 옆 새로고침(↻)으로 다시 찾아볼 수 있습니다.'));
+      list.append(empty);
+    }
     resolveFaces(['fa-solid fa-icons', ...items.map(record => draft.areas[selectedArea].items[record.key]?.icon || record.originalIcon)].filter(Boolean));
     for (const record of items) {
       const config = draft.areas[selectedArea].items[record.key] || {};
       const displayName = NAMED_AREAS.has(selectedArea) && config.alias ? config.alias : record.name;
-      const row = element('div', { class: 'stt-row', role: 'button', tabindex: '0', 'data-key': record.key, 'aria-pressed': String(selectedKey === record.key && (!compactPanel() || expandedKey === record.key)), 'aria-label': `${displayName} 편집`, draggable: selectedArea !== 'topbar' ? 'true' : 'false' });
+      const row = element('div', { class: 'stt-row', role: 'button', tabindex: '0', 'data-key': record.key, 'aria-pressed': String(selectedKey === record.key && (!compactPanel() || expandedKey === record.key)), 'aria-label': `${displayName} 편집` });
       const choose = () => { expandedKey = compactPanel() && expandedKey === record.key ? null : record.key; selectedKey = record.key; renderList(false); renderDetail(); };
       row.addEventListener('click', choose);
       row.addEventListener('keydown', event => {
@@ -3528,27 +3844,25 @@
         if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); choose(); }
         if (event.altKey && ['ArrowUp', 'ArrowDown'].includes(event.key)) { event.preventDefault(); move(record.key, event.key === 'ArrowUp' ? -1 : 1); }
       });
-      row.addEventListener('dragstart', event => { event.dataTransfer.setData('text/st-tailor', record.key); event.dataTransfer.effectAllowed = 'move'; try { const r = row.getBoundingClientRect(); event.dataTransfer.setDragImage(row, Math.min(event.clientX - r.left, r.width), Math.min(event.clientY - r.top, r.height)); } catch (_) {} });
-      row.addEventListener('dragover', event => { if ([...event.dataTransfer.types].includes('text/st-tailor')) { event.preventDefault(); event.dataTransfer.dropEffect = 'move'; const rect = row.getBoundingClientRect(); const after = event.clientY >= rect.top + rect.height / 2; row.classList.toggle('stt-drop', !after); row.classList.toggle('stt-drop-after', after); } });
-      row.addEventListener('dragleave', () => row.classList.remove('stt-drop', 'stt-drop-after'));
-      row.addEventListener('dragend', () => panel?.querySelectorAll('.stt-drop,.stt-drop-after').forEach(n => n.classList.remove('stt-drop', 'stt-drop-after')));
-      row.addEventListener('drop', event => {
-        event.preventDefault();
-        const key = event.dataTransfer.getData('text/st-tailor');
-        if (key === record.key || !records[selectedArea].some(r => r.key === key)) return;
-        const rect = row.getBoundingClientRect();
-        const order = ordered(selectedArea, draft).map(r => r.key).filter(k => k !== key);
-        const before = event.clientY >= rect.top + rect.height / 2 ? order[order.indexOf(record.key) + 1] : record.key;
-        reorder(key, before);
-      });
       const copy = element('span', { class: 'stt-row-copy' });
       copy.append(element('strong', {}, displayName));
       const description = [NAMED_AREAS.has(selectedArea) && config.alias ? record.name : '', config.hidden ? '숨김' : '', record.state.dynamic ? '상태 표시' : ''].filter(Boolean).join(' · ');
       if (description) copy.append(element('small', {}, description));
       const hidden = record.protected
         ? element('span', { class: 'stt-row-locked', title: record.area === 'wand' ? '설정창 열기' : '필수 입력창 버튼' }, '숨김 불가')
-        : button(config.hidden ? '복구' : '숨기기', event => { event.stopPropagation(); patchItem(record.key, { hidden: !config.hidden }); if (record.key === selectedKey) renderDetail(); }, { class: 'stt-row-hide', 'aria-label': `${record.name} ${config.hidden ? '숨기기 해제' : '숨기기'}` });
-      row.append(element('span', { class: 'stt-grip', 'aria-hidden': 'true' }, '⠿'), iconPreview(config.icon, record.originalIcon), copy, hidden);
+        : button(config.hidden ? '복구' : '숨기기', event => {
+          event.stopPropagation();
+          const before = clone(draft);
+          patchItem(record.key, { hidden: !config.hidden });
+          if (record.key === selectedKey) renderDetail();
+          offerUndo(`‘${displayName}’ ${config.hidden ? '다시 보임' : '숨김'}`, before);
+        }, { class: 'stt-row-hide', 'aria-label': `${record.name} ${config.hidden ? '숨기기 해제' : '숨기기'}` });
+      const more = button('', event => { event.stopPropagation(); openRowMenu(more, record, event.detail === 0); }, { class: 'stt-row-more', 'aria-label': `${displayName} 메뉴`, title: '메뉴', 'aria-haspopup': 'menu', 'aria-expanded': 'false' });
+      more.append(iconPreview('fa-solid fa-ellipsis'));
+      // The top bar keeps SillyTavern's order, so its rows get no grip.
+      const grip = selectedArea === 'topbar' ? null : element('button', { type: 'button', class: 'stt-grip', 'aria-label': `${displayName} 순서 옮기기`, title: '끌어서 순서 옮기기 (↑↓ 키도 됨)' }, '⠿');
+      grip?.addEventListener('click', event => event.stopPropagation());
+      row.append(...[grip, iconPreview(config.icon, record.originalIcon), copy, hidden, more].filter(Boolean));
       list.append(row);
     }
     list.scrollTop = scroll;
@@ -3569,15 +3883,36 @@
     closeTips();
     updateTabFade();
     const detail = panel.querySelector('[data-stt-detail]');
-    const row = [...panel.querySelectorAll('[data-key]')].find(n => n.dataset.key === expandedKey);
+    const row = [...panel.querySelectorAll('.stt-row[data-key]')].find(n => n.dataset.key === expandedKey);
     const compact = compactPanel();
     detail.hidden = FORM_TABS.has(selectedArea) || (compact && !row);
-    if (compact && row) { if (row.nextElementSibling !== detail) row.after(detail); }
-    else if (detail.parentElement !== panel.querySelector('.stt-editor')) panel.querySelector('.stt-editor').append(detail);
+    // Narrow panels edit an item in a sheet that rises from the bottom, so the list keeps its place.
+    const sheet = compact && !!row && !FORM_TABS.has(selectedArea);
+    const opening = sheet && !detail.classList.contains('stt-sheet');
+    detail.classList.toggle('stt-sheet', sheet);
+    let backdrop = panel.querySelector('.stt-sheet-backdrop');
+    if (sheet) {
+      if (!backdrop) { backdrop = element('div', { class: 'stt-sheet-backdrop', 'aria-hidden': 'true' }); backdrop.addEventListener('click', closeSheet); }
+      if (detail.parentElement !== panel) panel.append(backdrop, detail);
+      detail.setAttribute('tabindex', '-1');
+      if (opening) { detail.scrollTop = 0; detail.focus({ preventScroll: true }); }
+    } else {
+      backdrop?.remove();
+      detail.removeAttribute('tabindex');
+      if (detail.parentElement !== panel.querySelector('.stt-editor')) panel.querySelector('.stt-editor').append(detail);
+    }
     for (const item of panel.querySelectorAll('[data-key]')) {
       if (compact) item.setAttribute('aria-expanded', String(item.dataset.key === expandedKey));
       else item.removeAttribute('aria-expanded');
     }
+  }
+
+  function closeSheet() {
+    if (!panel || !expandedKey) return;
+    const key = expandedKey;
+    expandedKey = null;
+    renderList(false);
+    [...panel.querySelectorAll('.stt-row')].find(r => r.dataset.key === key)?.focus();
   }
 
   function colorField(value, change) {
@@ -3586,7 +3921,13 @@
     const text = element('span', { class: 'stt-color-value' }, value || '기본 색상');
     const reset = button('기본', () => { text.textContent = '기본 색상'; reset.hidden = true; change(''); }, { title: '기본 색상으로' });
     reset.hidden = !value;
-    input.addEventListener('input', () => { text.textContent = input.value; reset.hidden = false; change(input.value); });
+    // Dragging in the colour picker fires many inputs: pass the colour on at most every 80ms (and once more on release).
+    let pending = 0;
+    input.addEventListener('input', () => {
+      text.textContent = input.value; reset.hidden = false;
+      if (!pending) pending = host.setTimeout(() => { pending = 0; change(input.value); }, 80);
+    });
+    input.addEventListener('change', () => { host.clearTimeout(pending); pending = 0; change(input.value); });
     wrapper.append(input, text, reset); return wrapper;
   }
 
@@ -3602,17 +3943,22 @@
     const heading = element('div', { class: 'stt-detail-heading' });
     const displayName = NAMED_AREAS.has(selectedArea) && config.alias ? config.alias : record.name;
     heading.append(iconPreview(config.icon, record.originalIcon), element('h3', {}, displayName));
+    const closer = button('', closeSheet, { class: 'stt-sheet-close', 'aria-label': '편집 닫기', title: '닫기' });
+    closer.append(iconPreview('fa-solid fa-xmark'));
     detail.append(heading);
     if (config.alias) detail.append(element('p', { class: 'stt-original' }, `원래 이름 · ${record.name}`));
     if (selectedArea !== 'topbar') {
       const actions = element('div', { class: 'stt-inline-actions' });
-      actions.append(actionButton('위로', '↑', () => move(record.key, -1)), actionButton('아래로', '↓', () => move(record.key, 1)), actionButton('항목 초기화', '↺', () => {
+      actions.append(actionButton('위로', 'fa-solid fa-arrow-up', () => move(record.key, -1)), actionButton('아래로', 'fa-solid fa-arrow-down', () => move(record.key, 1)), actionButton('항목 초기화', 'fa-solid fa-rotate-left', () => {
+        const before = clone(draft);
         delete draft.areas[selectedArea].items[record.key];
         draft.areas[selectedArea].order = draft.areas[selectedArea].order.filter(k => k !== record.key);
         renderList();
+        offerUndo(`‘${displayName}’ 초기화`, before);
       }, 'stt-reset'));
       heading.append(actions);
     }
+    heading.append(closer);
     if (NAMED_AREAS.has(selectedArea)) {
       const alias = element('input', { type: 'text', maxlength: '100', placeholder: record.name, value: config.alias || '', 'aria-label': '표시 이름' });
       alias.addEventListener('input', () => patch({ alias: alias.value.trim() }));
@@ -3621,9 +3967,9 @@
     const iconControl = element('div', { class: 'stt-icon-control' });
     const allowNoIcon = selectedArea !== 'topbar';
     const mode = config.icon === 'none' ? (allowNoIcon ? 'none' : '') : config.icon ? 'custom' : '';
-    const iconModes = [['', THEME_AS_IS], ['custom', '아이콘 선택']];
-    if (allowNoIcon) iconModes.push(['none', '아이콘 없음']);
-    const modeSelect = select(iconModes, mode, value => {
+    const iconModes = [['', THEME_AS_IS], ['custom', '직접 고르기']];
+    if (allowNoIcon) iconModes.push(['none', '없음']);
+    const modeSelect = choice(iconModes, mode, value => {
       if (value === 'custom') {
         const [prefix, name] = (record.originalIcon || '').split(' ');
         patch({ icon: catalogs[prefix]?.has(name) ? record.originalIcon : 'fa-solid fa-scissors' });
@@ -3665,7 +4011,8 @@
         more.textContent = `아이콘 ${matches.length - shown}개 더 보기`;
       };
       const more = button('', () => { shown += BATCH * 4; draw(); }, { class: 'stt-icon-more' });
-      search.addEventListener('input', () => { shown = BATCH; draw(); });
+      let searchTimer = 0;
+      search.addEventListener('input', () => { host.clearTimeout(searchTimer); searchTimer = host.setTimeout(() => { shown = BATCH; draw(); }, 150); });
       if (styleOptions.length > 1) picker.append(select(styleOptions, prefix, value => { pickerPrefix = value; shown = BATCH; draw(); }, '아이콘 스타일'));
       picker.append(search, grid, more);
       draw(); detail.append(picker);
@@ -3676,10 +4023,10 @@
     if (selectedArea === 'topbar') return;
     if (selectedArea !== 'input' && selectedArea !== 'topbar') {
       detail.append(field('색상', colorField(config.color, value => patch({ color: value }))));
-      if (selectedArea !== 'messages') detail.append(field('색상 적용', select([['both', '이름과 아이콘'], ['label', '이름'], ['icon', '아이콘']], config.colorTarget || 'both', value => patch({ colorTarget: value }), '색상 적용')));
-      if (selectedArea === 'extensions') detail.append(field('글자 굵기', select([['bold', '굵게'], ['normal', '얇게']], config.fontWeight || 'bold', value => patch({ fontWeight: value }), '글자 굵기')));
+      if (selectedArea !== 'messages') detail.append(field('색상 적용', choice([['both', '이름과 아이콘'], ['label', '이름'], ['icon', '아이콘']], config.colorTarget || 'both', value => patch({ colorTarget: value }), '색상 적용')));
+      if (selectedArea === 'extensions') detail.append(field('글자 굵기', choice([['bold', '굵게'], ['normal', '얇게']], config.fontWeight || 'bold', value => patch({ fontWeight: value }), '글자 굵기')));
     } else {
-      detail.append(field('위치', select([['', `기본 위치 · ${record.side === 'left' ? '왼쪽' : '오른쪽'}`], ['left', '입력창 왼쪽'], ['right', '입력창 오른쪽']], config.side || '', value => patch({ side: value }), '위치')));
+      detail.append(field('위치', choice([['', `기본 (${record.side === 'left' ? '왼쪽' : '오른쪽'})`], ['left', '왼쪽'], ['right', '오른쪽']], config.side || '', value => patch({ side: value }), '위치')));
       detail.append(field('색상', colorField(config.color, value => patch({ color: value })), tip('비우면 아래 공통 색상을 따릅니다')));
     }
     if (record.protected) detail.append(element('p', { class: 'stt-locked-note' }, record.area === 'wand' ? '설정창을 여는 항목은 숨길 수 없습니다.' : record.area === 'topbar' ? '상단바 메뉴는 아이콘만 바꿀 수 있습니다.' : '필수 입력창 버튼이라 숨길 수 없습니다.'));
@@ -3700,7 +4047,7 @@
   function renderInputLayout(container) {
     const box = element('section', { class: 'stt-common', 'data-stt-layout-settings': '' });
     const heading = element('div', { class: 'stt-common-heading' });
-    heading.append(element('h3', {}, '입력창 배치'), actionButton('입력창 배치 초기화', '↺', () => {
+    heading.append(element('h3', {}, '입력창 배치'), actionButton('입력창 배치 초기화', 'fa-solid fa-rotate-left', () => {
       draft.inputLayout = defaults().inputLayout; draft.inputLayoutMobile = null; renderPanelBody();
     }, 'stt-reset'));
     box.append(heading);
@@ -3715,10 +4062,10 @@
       const col = element('div', { class: 'stt-layout-col' });
       if (title) col.append(element('h4', { class: 'stt-layout-title' }, title));
       const prefix = title ? `${title} · ` : '';
-      const position = select([['top', '위 · 입력칸 위 / 버튼 아래'], ['bottom', '아래 · 버튼 위 / 입력칸 아래']], config.position, value => {
+      const position = choice([['top', '위'], ['bottom', '아래']], config.position, value => {
         config.position = value; update();
       }, `${prefix}두 줄일 때 입력칸 위치`);
-      const rows = select([['theme', THEME_AS_IS], ['single', '한 줄'], ['double', '두 줄']], config.rows, value => {
+      const rows = choice([['theme', THEME_AS_IS], ['single', '한 줄'], ['double', '두 줄']], config.rows, value => {
         config.rows = value; update();
       }, `${prefix}입력창 줄 구성`);
       const positionField = field('두 줄일 때 입력칸 위치', position);
@@ -3741,7 +4088,7 @@
     renderInputLayout(container);
     const box = element('section', { class: 'stt-common' });
     const heading = element('div', { class: 'stt-common-heading' });
-    heading.append(element('h3', {}, '입력창 버튼 공통 모양'), actionButton('공통 모양 초기화', '↺', () => { draft.inputStyle = defaults().inputStyle; renderPanelBody(); }, 'stt-reset'));
+    heading.append(element('h3', {}, '입력창 버튼 공통 모양'), actionButton('공통 모양 초기화', 'fa-solid fa-rotate-left', () => { draft.inputStyle = defaults().inputStyle; renderPanelBody(); }, 'stt-reset'));
     box.append(heading);
     const controls = element('div', { class: 'stt-common-fields' });
     // Current sizes: measured once when the panel opens, from the first visible input button.
@@ -3776,10 +4123,10 @@
     box.append(title);
     const grid = element('div', { class: 'stt-form-grid' });
     const text = element('input', { type: 'text', maxlength: '200', placeholder: '예: 오늘은 무슨 이야기를 할까요?', value: config.text, 'aria-label': '입력창 안내 문구' });
-    text.addEventListener('input', () => { config.text = text.value; previewDraft(); });
+    text.addEventListener('input', () => { config.text = text.value; previewLater(); });
     const textField = field('문구', text, tip('API 연결이 안 됐을 때의 안내는 그대로 보입니다'));
     const sync = () => { textField.hidden = config.mode !== 'custom'; };
-    const modeField = field('표시', select([['default', '실리태번 그대로'], ['hide', '숨기기'], ['custom', '직접 쓰기']], config.mode, value => { config.mode = value; sync(); previewDraft(); }, '입력창 안내 문구 표시'));
+    const modeField = field('표시', choice([['default', '실리태번 그대로'], ['hide', '숨기기'], ['custom', '직접 쓰기']], config.mode, value => { config.mode = value; sync(); previewDraft(); }, '입력창 안내 문구 표시'));
     grid.append(modeField, textField);
     sync();
     box.append(grid);
@@ -3792,9 +4139,9 @@
     box.append(element('h3', {}, '입력창 위 QR 바'));
     const grid = element('div', { class: 'stt-form-grid' });
     grid.append(
-      field('표시 방식', select([['always','항상 표시'],['focus','입력창 포커스 시 표시'],['toggle','접이식 바']], config.mode, value => { config.mode = value; }, 'QR 표시 방식')),
-      field('행 구성', select([['single','전체 한 줄'],['sets','세트별 한 줄']], config.layout, value => { config.layout = value; }, 'QR 행 구성')),
-      field('버튼 정렬', select([['left','왼쪽'],['center','가운데'],['right','오른쪽']], config.align, value => { config.align = value; }, 'QR 버튼 정렬')),
+      field('표시 방식', choice([['always','항상'],['focus','입력할 때만'],['toggle','접이식 바']], config.mode, value => { config.mode = value; }, 'QR 표시 방식')),
+      field('행 구성', choice([['single','전체 한 줄'],['sets','세트별 한 줄']], config.layout, value => { config.layout = value; }, 'QR 행 구성')),
+      field('버튼 정렬', choice([['left','왼쪽'],['center','가운데'],['right','오른쪽']], config.align, value => { config.align = value; }, 'QR 버튼 정렬')),
       field('버튼 모양', select([['theme', THEME_AS_IS],['pill','알약'],['rounded','둥근 사각'],['plain','배경·테두리 없음']], config.style, value => { config.style = value; }, 'QR 버튼 모양')));
     box.append(grid);
     container.append(box);
@@ -3813,7 +4160,7 @@
     const where = element('section', { class: 'stt-common' });
     where.append(element('h3', {}, '놓는 곳'));
     const [whereLeft] = columns(where);
-    whereLeft.append(field('시계 · 바로가기 위치', select([['inside', '홈 상자 안 맨 위'], ['above', '홈 상자 바깥 (바로 위)']], home.place, value => { home.place = value; preview(); }, '시계 · 바로가기 놓는 곳'),
+    whereLeft.append(field('시계 · 바로가기 위치', choice([['inside', '홈 상자 안 맨 위'], ['above', '홈 상자 바깥 (바로 위)']], home.place, value => { home.place = value; preview(); }, '시계 · 바로가기 놓는 곳'),
       tip('시계 · 검색 · 즐겨찾기가 들어갈 자리. 테마가 홈을 카드로 그려서 최근 채팅과 한 상자에 묶여 보이면 바깥을 고르세요')));
     container.append(where);
     const box = element('section', { class: 'stt-common' });
@@ -3825,31 +4172,35 @@
     clockLeft.append(checkbox('현재 시각 보이기', config.enabled, value => { config.enabled = value; syncClock(); preview(); }), clockBasics);
     clockBasics.append(checkbox('시계 아래 날짜 · 요일 보이기', config.date, value => { config.date = value; preview(); }));
     const label = element('input', { type: 'text', maxlength: '40', value: config.label, placeholder: '비우면 문구 없음', 'aria-label': '시계 위 문구' });
-    label.addEventListener('input', () => { config.label = label.value; preview(); });
+    label.addEventListener('input', () => { config.label = label.value; previewLater(); });
     clockBasics.append(field('시계 위 문구', label));
-    clockBasics.append(field('시간 표시', select([['24', '24시간 (예: 21:07)'], ['12', '12시간 (예: 09:07 PM)']], config.hour12 ? '12' : '24', value => { config.hour12 = value === '12'; preview(); }, '시간 표시 방식')));
+    clockBasics.append(field('시간 표시', choice([['24', '24시간'], ['12', '12시간 (AM/PM)']], config.hour12 ? '12' : '24', value => { config.hour12 = value === '12'; preview(); }, '시간 표시 방식')));
     const clockSample = fontSample(config.font, '12:34  0123456789');
     const clockFont = field('숫자 글꼴', select(fontOptions(), config.font, value => { config.font = value; clockSample.show(value); preview(); }, '시계 숫자 글꼴'));
     clockFont.append(clockSample.node);
     clockRight.append(clockFont);
     const customColor = colorField(config.customColor, value => { config.customColor = value; preview(); });
     const syncColor = () => { customColor.hidden = config.color !== 'custom'; };
-    const colorPick = field('숫자 색', select([['soft', '본문 글자색보다 옅게'], ['body', '본문 글자색 그대로'], ['custom', '직접 고르기']], config.color, value => { config.color = value; syncColor(); preview(); }, '시계 숫자 색'));
+    const colorPick = field('숫자 색', choice([['soft', '조금 옅게'], ['body', '본문 글자색'], ['custom', '직접 고르기']], config.color, value => { config.color = value; syncColor(); preview(); }, '시계 숫자 색'));
     syncColor();
     clockRight.append(colorPick, customColor);
-    const clockSlider = (key, title, min, max, fallback, unit) => {
+    // Same slider rules as the font tab: wide ranges move in steps, and dragging refreshes the page at most every 80ms.
+    let previewTimer = 0;
+    const previewSoon = () => { if (previewTimer) return; previewTimer = host.setTimeout(() => { previewTimer = 0; if (draft) preview(); }, 80); };
+    const clockSlider = (key, title, min, max, fallback, unit, step = 1) => {
       const row = element('div', { class: 'stt-font-slider' });
-      const range = element('input', { type: 'range', min, max, step: 1, value: config[key], 'aria-label': `시계 ${title}` });
-      const set = next => { config[key] = next; range.value = next; sync(); preview(); };
-      const shown = numberBox({ min, max, unit, label: `시계 ${title} 직접 입력`, current: () => config[key], onValue: set });
+      const range = element('input', { type: 'range', min, max, step, value: config[key], 'aria-label': `시계 ${title}` });
+      // how: 'drag' (slider) refreshes every 80ms, 'type' (number box) once typing pauses.
+      const set = (next, how) => { config[key] = next; range.value = next; sync(); if (how === 'drag') previewSoon(); else if (how === 'type') previewLater(); else preview(); };
+      const shown = numberBox({ min, max, unit, label: `시계 ${title} 직접 입력`, current: () => config[key], onValue: (next, typing) => set(next, typing ? 'type' : undefined) });
       const sync = () => { shown.show(config[key]); range.style.setProperty('--stt-fill', `${(range.value - min) / (max - min) * 100}%`); reset.toggleAttribute('data-idle', config[key] === fallback); };
-      range.addEventListener('input', () => set(Number(range.value)));
-      const reset = button('↺', () => set(fallback), { 'aria-label': `시계 ${title} 되돌리기`, title: '기본값' });
+      range.addEventListener('input', () => set(Number(range.value), 'drag'));
+      const reset = iconButton('fa-solid fa-rotate-left', () => set(fallback), { 'aria-label': `시계 ${title} 되돌리기`, title: '기본값' });
       sync();
       row.append(element('span', {}, title), range, shown.node, reset);
       return row;
     };
-    clockRight.append(clockSlider('size', '크기', 50, 200, 100, '%'), clockSlider('top', '위 여백', 0, 80, 20, 'px'), clockSlider('bottom', '아래 여백', 0, 80, 8, 'px'));
+    clockRight.append(clockSlider('size', '크기', 50, 200, 100, '%', 5), clockSlider('top', '위 여백', 0, 80, 20, 'px', 2), clockSlider('bottom', '아래 여백', 0, 80, 8, 'px', 2));
     syncClock();
     container.append(box);
     const side = element('section', { class: 'stt-common' });
@@ -3857,7 +4208,7 @@
     const [search, favorites] = columns(side);
     search.append(checkbox('홈에서 캐릭터 검색', home.search, value => { home.search = value; preview(); }, tip('누르면 바로 대화 열기')));
     const favStyle = element('div', { class: 'stt-sub' });
-    favStyle.append(field('즐겨찾기 모양', select([['circle', '동그란 사진'], ['card', '세로 카드']], home.favorites.style, value => { home.favorites.style = value; preview(); }, '즐겨찾기 모양')));
+    favStyle.append(field('즐겨찾기 모양', choice([['circle', '동그란 사진'], ['card', '세로 카드']], home.favorites.style, value => { home.favorites.style = value; preview(); }, '즐겨찾기 모양')));
     const syncFav = () => { favStyle.hidden = !home.favorites.enabled; };
     favorites.append(checkbox('즐겨찾기한 캐릭터 보이기', home.favorites.enabled, value => { home.favorites.enabled = value; syncFav(); preview(); }), favStyle);
     syncFav();
@@ -3900,14 +4251,14 @@
     const config = draft.topbarFold;
     box.append(element('h3', {}, '상단바 접기'));
     const grid = element('div', { class: 'stt-form-grid' });
-    const lookField = field('접혔을 때 표시', select([['handle', '막대 (기본)'], ['dots', '점 세 개'], ['shadow', '위쪽 그림자']], config.look, value => { config.look = value; previewDraft(); }, '접혔을 때 표시'));
+    const lookField = field('접혔을 때 표시', choice([['handle', '막대'], ['dots', '점 세 개'], ['shadow', '위쪽 그림자']], config.look, value => { config.look = value; previewDraft(); }, '접혔을 때 표시'));
     const chatOnlyBox = checkbox('채팅방에서만 접기', config.chatOnly, value => { config.chatOnly = value; previewDraft(); }, tip('홈 화면에서는 상단바를 그대로 둡니다'));
     const hoverBox = checkbox('PC에서 마우스를 위에 올리면 자동 펼치기', config.hover, value => { config.hover = value; previewDraft(); }, tip('상단바 아래로 벗어나면 다시 접힘'));
     const colorBox = field('표시 색', colorField(config.color, value => { config.color = value; previewDraft(); }));
     colorBox.style.setProperty('grid-column', '1 / -1', 'important');
     const syncLook = () => { lookField.hidden = colorBox.hidden = chatOnlyBox.hidden = config.mode === 'off'; hoverBox.hidden = config.mode !== 'all'; };
     grid.append(
-      field('적용 화면', select([['off', '사용 안 함'], ['narrow', '모바일 화면에서만'], ['all', '모든 화면']], config.mode, value => { config.mode = value; syncLook(); previewDraft(); }, '상단바 접기 적용 화면'),
+      field('적용 화면', choice([['off', '사용 안 함'], ['narrow', '모바일만'], ['all', '모든 화면']], config.mode, value => { config.mode = value; syncLook(); previewDraft(); }, '상단바 접기 적용 화면'),
         '맨 위를 누르면 펼치고, 바깥을 누르면 접힙니다.'),
       lookField, chatOnlyBox, hoverBox, colorBox);
     syncLook();
@@ -3930,20 +4281,27 @@
       panel?.style.setProperty('--stt-ui-font', host.getComputedStyle(doc.body).fontFamily);
     };
     const families = fontOptions();
+    // While a slider is dragged, refresh the page at most every 80ms (each refresh rewrites the whole font style).
+    let previewTimer = 0;
+    const previewSoon = () => { if (previewTimer) return; previewTimer = host.setTimeout(() => { previewTimer = 0; if (draft) preview(); }, 80); };
+    let typedTimer = 0;
+    const previewTyped = () => { host.clearTimeout(typedTimer); typedTimer = host.setTimeout(() => { typedTimer = 0; if (draft) preview(); }, 250); };
     const slider = (config, key, label, title, changed = () => {}) => {
       const [min, max] = FONT_LIMITS[key];
       const fallback = { ...markStyle(), ...fontDefaults() }[key];
       const row = element('div', { class: 'stt-font-slider' });
-      const range = element('input', { type: 'range', min, max, step: 1, value: config[key] ?? (key === 'stroke' ? 0 : fallback ?? 0), 'aria-label': `${title} ${label}` });
+      // Wide ranges move in steps on the slider (size · line height · fade 5%); the number box still takes any value.
+      const range = element('input', { type: 'range', min, max, step: ['size', 'lineHeight', 'fade'].includes(key) ? 5 : 1, value: config[key] ?? (key === 'stroke' ? 0 : fallback ?? 0), 'aria-label': `${title} ${label}` });
       const fill = () => range.style.setProperty('--stt-fill', `${(range.value - min) / (max - min) * 100}%`);
       fill();
       const idle = () => reset.toggleAttribute('data-idle', (config[key] ?? null) === (fallback ?? null));
-      const apply = next => { config[key] = next; range.value = next ?? 0; fill(); showValue(next); idle(); preview(); changed(); };
+      // how: 'drag' (slider) refreshes every 80ms, 'type' (number box) once typing pauses.
+      const apply = (next, how) => { config[key] = next; range.value = next ?? 0; fill(); showValue(next); idle(); if (how === 'drag') previewSoon(); else if (how === 'type') previewTyped(); else preview(); changed(); };
       const scale = { stroke: 10, spacing: 100 }[key] || 1;
       const unit = { stroke: 'px', spacing: 'em' }[key] || '%';
-      const { node: value, show: showValue } = numberBox({ min, max, scale, unit, label: `${title} ${label} 직접 입력`, current: () => config[key] ?? null, nullable: fallback === null, onValue: apply });
-      const reset = button('↺', () => apply(fallback), { 'aria-label': `${title} ${label} 되돌리기`, title: '테마 그대로' });
-      range.addEventListener('input', () => apply(Number(range.value)));
+      const { node: value, show: showValue } = numberBox({ min, max, scale, unit, label: `${title} ${label} 직접 입력`, current: () => config[key] ?? null, nullable: fallback === null, onValue: (next, typing) => apply(next, typing ? 'type' : undefined) });
+      const reset = iconButton('fa-solid fa-rotate-left', () => apply(fallback), { 'aria-label': `${title} ${label} 되돌리기`, title: '테마 그대로' });
+      range.addEventListener('input', () => apply(Number(range.value), 'drag'));
       idle();
       row.append(element('span', {}, label), range, value, reset);
       return row;
@@ -3954,7 +4312,7 @@
       const heading = element('div', { class: 'stt-common-heading' });
       const headingTitle = element('h3', { class: 'stt-label-line' }, title);
       if (group === 'chat') headingTitle.append(infoToggle(title, '채팅 메시지와 채팅 입력창 글자에 적용됩니다. 행간은 메시지에만 적용됩니다.'));
-      heading.append(headingTitle, actionButton(`${title} 초기화`, '↺', () => { draft.fonts[group] = fontDefaults(); preview(); renderPanelBody(); }, 'stt-reset'));
+      heading.append(headingTitle, actionButton(`${title} 초기화`, 'fa-solid fa-rotate-left', () => { draft.fonts[group] = fontDefaults(); preview(); renderPanelBody(); }, 'stt-reset'));
       box.append(heading);
       const sample = fontSample(config.family, '가나다라 마바사 · Aa Bb Cc 123 · あいう');
       const family = field('기본 글꼴', select(families, config.family, value => { config.family = value; sample.show(value); preview(); }, `${title} 기본 글꼴`));
@@ -3963,7 +4321,7 @@
       // Per-language fonts are collapsed since few use them; a • by the title marks that one is set.
       const langs = element('div', { class: 'stt-font-langs' });
       const langsBody = element('div', { class: 'stt-font-langs-body', id: `stt-font-langs-${group}` });
-      const langsSet = () => FONT_LANG_ORDER.some(lang => config.langs[lang]);
+      const langsSet = () => langsUsed(config);
       const langsToggle = button('', () => {
         if (expandedLangs.has(group)) expandedLangs.delete(group); else expandedLangs.add(group);
         syncLangs();
@@ -3972,7 +4330,7 @@
         const open = expandedLangs.has(group);
         langsToggle.setAttribute('aria-expanded', String(open));
         langsToggle.textContent = langsSet() ? '언어별 글꼴 •' : '언어별 글꼴';
-        langsToggle.title = langsSet() ? '고른 글꼴이 있음' : '영어 · 일본어 · 중국어 글자에만 다른 글꼴';
+        langsToggle.title = langsSet() ? '고른 글꼴이나 조정한 값이 있음' : '영어 · 일본어 · 중국어 글자에만 다른 글꼴 · 크기';
         langsBody.hidden = !open;
       };
       langs.append(langsToggle, langsBody);
@@ -3980,10 +4338,39 @@
       for (const [lang, label, text] of [['en', '영어', 'Aa Bb Cc 123 · “Hello”'], ['ja', '일본어', 'あいう アイウ 日本語'], ['zh', '중국어', '中文字体 · 汉字 漢字']]) {
         const langSample = fontSample(config.langs[lang], text);
         const row = element('div', { class: 'stt-font-lang' });
-        row.append(element('span', {}, label), select(langFamilies, config.langs[lang], value => { config.langs[lang] = value; langSample.show(value); preview(); syncLangs(); }, `${title} ${label} 글꼴`), langSample.node);
+        const look = config.langLook[lang];
+        const lookId = `${group}:${lang}`;
+        const keys = group === 'chat' ? ['size', 'stroke', 'spacing'] : ['size'];
+        const tuned = () => keys.some(key => look[key] !== langLookDefault()[key]);
+        const what = group === 'chat' ? '크기 · 굵기 · 자간' : '크기';
+        // Opening/closing only adds or removes this row's sliders; redrawing the whole font tab was slow.
+        let sliders = null;
+        const showTuned = () => { adjust.textContent = tuned() ? '조정 •' : '조정'; adjust.title = tuned() ? '조정한 값이 있음' : what; syncLangs(); };
+        const buildSliders = () => {
+          const box = element('div', { class: 'stt-font-mark-adjust' });
+          // The UI group can only scale a language through a font (its own, or the main font); messages can always.
+          if (group === 'ui' && !config.langs[lang] && !config.family) box.append(element('small', { class: 'stt-font-note' }, `${label} 글꼴이나 기본 글꼴을 고르면 크기를 바꿀 수 있습니다.`));
+          else for (const key of keys) box.append(slider(look, key, { size: '크기', stroke: '굵기', spacing: '자간' }[key], `${title} ${label}`, showTuned));
+          return box;
+        };
+        const setOpen = open => {
+          if (open) expandedLangLooks.add(lookId); else expandedLangLooks.delete(lookId);
+          sliders?.remove(); sliders = open ? buildSliders() : null;
+          if (sliders) row.after(sliders);
+          adjust.setAttribute('aria-expanded', String(open));
+        };
+        const adjust = button(tuned() ? '조정 •' : '조정', () => setOpen(!expandedLangLooks.has(lookId)),
+          { class: 'stt-font-mark-toggle', 'aria-expanded': 'false', 'aria-label': `${title} ${label} ${what} 조정`, title: tuned() ? '조정한 값이 있음' : what });
+        row.append(element('span', {}, label), select(langFamilies, config.langs[lang], value => {
+          config.langs[lang] = value; langSample.show(value); preview(); syncLangs();
+          if (sliders) setOpen(true);   // the UI group's note depends on the chosen font
+        }, `${title} ${label} 글꼴`), adjust, langSample.node);
         langsBody.append(row);
+        if (expandedLangLooks.has(lookId)) setOpen(true);
       }
-      langsBody.append(element('small', { class: 'stt-font-note' }, '그 언어 글자에만 씁니다. 일본어와 중국어를 둘 다 고르면 한자는 일본어 글꼴로 나옵니다.'));
+      langsBody.append(element('small', { class: 'stt-font-note' }, group === 'chat'
+        ? '그 언어 글자에만 씁니다. 일본어와 중국어를 둘 다 고르면 한자는 일본어 글꼴로 나옵니다. 굵기 · 자간은 메시지 본문에만 적용됩니다.'
+        : '그 언어 글자에만 씁니다. 일본어와 중국어를 둘 다 고르면 한자는 일본어 글꼴로 나옵니다.'));
       syncLangs();
       for (const [key, label] of [['size', '크기'], ['stroke', '굵기'], ['lineHeight', '행간'], ['spacing', '자간']]) box.append(slider(config, key, label, title));
       box.append(langs);
@@ -3992,30 +4379,48 @@
     container.append(duo);
     // Partial fonts: built-in rules (quotes, corner brackets) plus custom open/close pairs.
     // The last column is reserved only when a custom rule (with a delete button) exists; otherwise the adjust button sits at the right edge.
-    const marksBox = element('section', { class: draft.fonts.marks.some(m => m.open) ? 'stt-common stt-font-marks-custom' : 'stt-common' });
+    const marksBox = element('section', { class: 'stt-common' });
     const marksTitle = element('h3', { class: 'stt-label-line' }, '부분 글꼴');
-    const marksInfo = infoToggle('부분 글꼴', '메시지 본문에만 적용됩니다. 규칙은 여는 글자와 닫는 글자(예: 【 】)로 추가하고, 줄바꿈(엔터) 없이 이어진 글 안에서만 찾습니다. 화면에서 자동으로 넘어간 줄은 상관없습니다.');
+    const marksInfo = infoToggle('부분 글꼴', '메시지 본문에만 적용됩니다. 규칙은 여는 글자와 닫는 글자(예: 【 】)로 추가하고, 줄바꿈(엔터) 없이 이어진 글 안에서만 찾습니다. 화면에서 자동으로 넘어간 줄은 상관없습니다. 겹치면 메시지 글꼴 → 언어별 글꼴 → 부분 글꼴 순으로 뒤의 것이 이깁니다(크기 포함). 부분 글꼴에서 정하지 않은 값은 언어별 설정을 따릅니다.');
     marksTitle.append(marksInfo);
     marksBox.append(marksTitle);
     for (const mark of draft.fonts.marks) {
+      if (mark.removed) continue;
       const preset = MARK_PRESETS.find(p => p.id === mark.id);
       const label = preset ? preset.name : `${mark.open} … ${mark.close}`;
       const row = element('div', { class: 'stt-font-mark' });
+      // Switch off to stop applying the rule without losing its font and adjustments.
+      const toggle = element('input', { type: 'checkbox', role: 'switch', 'aria-label': `${label} 사용`, title: mark.off ? '꺼짐 · 설정은 그대로' : '켜짐' });
+      toggle.checked = !mark.off;
+      toggle.addEventListener('change', () => { mark.off = !toggle.checked; row.toggleAttribute('data-off', !!mark.off); toggle.title = mark.off ? '꺼짐 · 설정은 그대로' : '켜짐'; preview(); });
+      row.toggleAttribute('data-off', !!mark.off);
       const name = element('span', {}, label);
       if (preset) name.append(element('small', {}, preset.sample));
-      const open = expandedMarks.has(mark.id);
       const tuned = () => MARK_ADJUST.some(key => mark[key] !== markStyle()[key]);
-      const adjust = button(tuned() ? '조정 •' : '조정', () => { if (open) expandedMarks.delete(mark.id); else expandedMarks.add(mark.id); renderPanelBody(); },
-        { class: 'stt-font-mark-toggle', 'aria-expanded': String(open), 'aria-label': `${label} 크기 · 굵기 · 자간 · 투명도 조정`, title: tuned() ? '조정한 값이 있음' : '크기 · 굵기 · 자간 · 투명도' });
-      row.append(name, select(families, mark.family, value => { mark.family = value; preview(); }, `${label} 글꼴`), adjust);
-      if (!preset) row.append(button('×', () => { draft.fonts.marks = draft.fonts.marks.filter(m => m !== mark); expandedMarks.delete(mark.id); preview(); renderPanelBody(); }, { 'aria-label': `${label} 규칙 삭제`, title: '삭제' }));
+      let sliders = null;
+      const showTuned = () => { adjust.textContent = tuned() ? '조정 •' : '조정'; adjust.title = tuned() ? '조정한 값이 있음' : '크기 · 굵기 · 자간 · 투명도'; };
+      const setOpen = open => {
+        if (open) expandedMarks.add(mark.id); else expandedMarks.delete(mark.id);
+        sliders?.remove(); sliders = null;
+        if (open) {
+          sliders = element('div', { class: 'stt-font-mark-adjust' });
+          for (const [key, title] of [['size', '크기'], ['stroke', '굵기'], ['spacing', '자간'], ['fade', '투명도']]) sliders.append(slider(mark, key, title, label, showTuned));
+          row.after(sliders);
+        }
+        adjust.setAttribute('aria-expanded', String(open));
+      };
+      const adjust = button(tuned() ? '조정 •' : '조정', () => setOpen(!expandedMarks.has(mark.id)),
+        { class: 'stt-font-mark-toggle', 'aria-expanded': 'false', 'aria-label': `${label} 크기 · 굵기 · 자간 · 투명도 조정`, title: tuned() ? '조정한 값이 있음' : '크기 · 굵기 · 자간 · 투명도' });
+      // Built-in rules are only marked removed (they can be put back below); added rules are dropped.
+      const remove = iconButton('fa-solid fa-xmark', () => {
+        const before = clone(draft);
+        if (preset) mark.removed = true; else draft.fonts.marks = draft.fonts.marks.filter(m => m !== mark);
+        expandedMarks.delete(mark.id); preview(); renderPanelBody();
+        offerUndo(`‘${label}’ 규칙 삭제`, before);
+      }, { 'aria-label': `${label} 규칙 삭제`, title: '삭제' });
+      row.append(name, select(families, mark.family, value => { mark.family = value; preview(); }, `${label} 글꼴`), adjust, remove, toggle);
       marksBox.append(row);
-      if (open) {
-        const sliders = element('div', { class: 'stt-font-mark-adjust' });
-        const showTuned = () => { adjust.textContent = tuned() ? '조정 •' : '조정'; adjust.title = tuned() ? '조정한 값이 있음' : '크기 · 굵기 · 자간 · 투명도'; };
-        for (const [key, title] of [['size', '크기'], ['stroke', '굵기'], ['spacing', '자간'], ['fade', '투명도']]) sliders.append(slider(mark, key, title, label, showTuned));
-        marksBox.append(sliders);
-      }
+      if (expandedMarks.has(mark.id)) setOpen(true);
     }
     const openInput = element('input', { type: 'text', maxlength: '4', placeholder: '여는 글자', 'aria-label': '여는 글자' });
     const closeInput = element('input', { type: 'text', maxlength: '4', placeholder: '닫는 글자', 'aria-label': '닫는 글자' });
@@ -4031,6 +4436,16 @@
     const adder = element('div', { class: 'stt-font-mark-add' });
     adder.append(openInput, closeInput, addRule);
     marksBox.append(adder);
+    const removed = draft.fonts.marks.filter(m => m.removed);
+    if (removed.length) {
+      const restore = element('div', { class: 'stt-font-mark-restore' });
+      restore.append(element('span', {}, '지운 기본 규칙'));
+      for (const mark of removed) {
+        const preset = MARK_PRESETS.find(p => p.id === mark.id);
+        restore.append(button(`${preset?.name || mark.id} 다시 넣기`, () => { mark.removed = false; preview(); renderPanelBody(); }));
+      }
+      marksBox.append(restore);
+    }
     container.append(marksBox);
     // Accepts @font-face code from web font sites, a Google Fonts <link>, a CSS URL or a font file URL.
     const box = element('section', { class: 'stt-common' });
@@ -4051,7 +4466,7 @@
       const list = element('div', { class: 'stt-font-chips', role: 'list', 'aria-label': '등록한 글꼴' });
       for (const entry of draft.fonts.custom) {
         const chip = element('span', { class: 'stt-font-chip', role: 'listitem' });
-        const remove = button('×', () => {
+        const remove = iconButton('fa-solid fa-xmark', () => {
           draft.fonts.custom = draft.fonts.custom.filter(f => f !== entry);
           for (const group of FONT_GROUPS) {
             const fonts = draft.fonts[group];
@@ -4431,6 +4846,7 @@
     if (selectedArea === 'qr') renderQrSettings(common);
     if (selectedArea === 'fonts') renderFontSettings(common);
     if (selectedArea === 'home') renderHomeSettings(common);
+    makeFoldable(common);
     renderList();
     if (FORM_TABS.has(selectedArea)) positionDetail();
     if (switched) renderPreview();
@@ -4552,7 +4968,10 @@
     const resetAll = menuItem(() => {
       if (!resetArmed) { resetArmed = host.setTimeout(() => { resetArmed = 0; syncReset(); }, 3000); syncReset(); return; }
       disarmReset(); setMenu(false);
-      draft = defaults(); syncMaster(); syncKo(); renderStyleToggle(); previewDraft(); renderPanelBody();
+      const before = clone(draft);
+      const redraw = () => { syncMaster(); syncKo(); renderStyleToggle(); previewDraft(); renderPanelBody(); };
+      draft = defaults(); redraw();
+      offerUndo('모든 탭을 기본값으로', before, redraw);
     }, 'stt-more-danger');
     const setMenu = open => {
       menu.hidden = !open;
@@ -4585,7 +5004,9 @@
     const toolbar = element('div', { class: 'stt-toolbar' });
     const search = element('input', { type: 'search', placeholder: '이름으로 항목 찾기', 'data-stt-search': '', 'aria-label': '항목 검색', value: query });
     search.addEventListener('input', () => { query = search.value; renderList(false); });
-    toolbar.append(search, button('목록 새로고침', () => { loadIcons(); refresh(false); renderPanelBody(); }));
+    const reload = button('', () => { loadIcons(); refresh(false); renderPanelBody(); }, { class: 'stt-reload', 'aria-label': '목록 새로고침', title: '목록 새로고침' });
+    reload.append(iconPreview('fa-solid fa-arrows-rotate'));
+    toolbar.append(search, reload);
     const editor = element('div', { class: 'stt-editor' });
     editor.append(toolbar, element('div', { class: 'stt-list', 'data-stt-list': '', 'aria-label': '편집할 항목' }), element('section', { class: 'stt-detail', 'data-stt-detail': '', 'aria-label': '선택한 항목 설정' }));
     content.append(editor); panel.append(content);
@@ -4593,6 +5014,8 @@
     const utilities = element('div', { class: 'stt-utilities' });
     areaToggle = button('', toggleArea, { class: 'stt-area-toggle' });
     utilities.append(areaToggle, button('이 탭 초기화', () => {
+      const before = clone(draft);
+      offerUndo(`${areaLabel(selectedArea)} 탭을 기본값으로`, before);
       if (selectedArea === 'qr') draft.qr = defaults().qr;
       else if (selectedArea === 'home') { draft.home = defaults().home; previewDraft(); }
       else if (selectedArea === 'fonts') {
@@ -4607,7 +5030,21 @@
     save.append(button('취소', () => closePanel(false)), button('저장 후 닫기', () => closePanel(true), { class: 'stt-primary' }));
     footer.append(utilities, save); panel.append(element('p', { class: 'stt-live', 'data-stt-live': '', role: 'status', 'aria-live': 'polite' }), footer);
     bindTips(panel);
-    panel.addEventListener('cancel', event => { event.preventDefault(); closePanel(false); });
+    // Escape (and the dialog's own cancel) closes a row menu or the item sheet before the panel itself.
+    panel.addEventListener('keydown', event => {
+      if (event.key !== 'Escape' || event.defaultPrevented || panel.querySelector('.stt-tip-pop')) return;
+      if (panel.querySelector('.stt-row-menu')) { event.preventDefault(); event.stopPropagation(); closeRowMenu(true); return; }
+      if (panel.querySelector('.stt-sheet')) { event.preventDefault(); event.stopPropagation(); closeSheet(); }
+    }, true);
+    panel.addEventListener('pointerdown', event => { if (!event.target.closest?.('.stt-row-menu, .stt-row-more')) closeRowMenu(); }, true);
+    panel.querySelector('.stt-content').addEventListener('scroll', () => closeRowMenu(), { capture: true, passive: true });
+    // Back/Escape via the dialog itself: close an open menu or sheet first (Android back fires only this event).
+    panel.addEventListener('cancel', event => {
+      event.preventDefault();
+      if (panel?.querySelector('.stt-row-menu')) { closeRowMenu(true); return; }
+      if (panel?.querySelector('.stt-sheet')) { closeSheet(); return; }
+      closePanel(false);
+    });
     const dialog = panel;
     panel.addEventListener('close', () => { if (panel === dialog) closePanel(false); });
     doc.body.append(panel);
