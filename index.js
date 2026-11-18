@@ -1,4 +1,4 @@
-/* ST Tailor 1.9.51 */
+/* ST Tailor 1.9.53 */
 (() => {
   'use strict';
   // The script build runs inside Tavern Helper's iframe, so the real page is the parent window; the extension build runs in that window directly.
@@ -6,7 +6,7 @@
   const doc = host.document;
   const GLOBAL = '__ST_TAILOR__';
   const STORAGE = 'st_tailor_v1';
-  const VERSION = "1.9.51";
+  const VERSION = "1.9.53";
   const IN_JSDOM = /jsdom/i.test(window.navigator?.userAgent || '');
   // Search only inside #chat, not the whole document: this runs on every DOM change, so keep it cheap.
   function welcomePanel() { return doc.getElementById('chat')?.getElementsByClassName('welcomePanel')[0] || null; }
@@ -344,16 +344,18 @@
       css: '@import url("https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap");' },
     spacegrotesk: { name: 'Space Grotesk', lang: 'en', family: '"Space Grotesk"', fallback: 'sans-serif',
       css: '@import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&display=swap");' },
+    // Japanese web fonts load regular and bold only: each weight adds a few hundred unicode-range pieces, and every
+    // new character makes the browser search them (measurable lag while a reply streams in). 500/600 fall back to 400/700.
     notosansjp: { name: 'Noto Sans JP', lang: 'ja', family: '"Noto Sans JP"', fallback: 'sans-serif',
-      css: '@import url("https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&display=swap");' },
+      css: '@import url("https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700&display=swap");' },
     mplusrounded: { name: 'M PLUS Rounded 1c', lang: 'ja', family: '"M PLUS Rounded 1c"', fallback: 'sans-serif',
-      css: '@import url("https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@400;500;700&display=swap");' },
+      css: '@import url("https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@400;700&display=swap");' },
     zenmaru: { name: 'Zen Maru Gothic', lang: 'ja', family: '"Zen Maru Gothic"', fallback: 'sans-serif',
-      css: '@import url("https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@400;500;700&display=swap");' },
+      css: '@import url("https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@400;700&display=swap");' },
     notoserifjp: { name: 'Noto Serif JP', lang: 'ja', family: '"Noto Serif JP"', fallback: 'serif',
       css: '@import url("https://fonts.googleapis.com/css2?family=Noto+Serif+JP:wght@400;700&display=swap");' },
     shippori: { name: 'Shippori Mincho', lang: 'ja', family: '"Shippori Mincho"', fallback: 'serif',
-      css: '@import url("https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@400;600;700&display=swap");' },
+      css: '@import url("https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@400;700&display=swap");' },
     notosanssc: { name: 'Noto Sans SC (간체)', lang: 'zh', family: '"Noto Sans SC"', fallback: 'sans-serif',
       css: '@import url("https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&display=swap");' },
     notoserifsc: { name: 'Noto Serif SC (간체)', lang: 'zh', family: '"Noto Serif SC"', fallback: 'serif',
@@ -1774,12 +1776,19 @@
     return names.find(x => catalogs[prefix]?.has(x)) || names.find(x => !FA_UTILITY.test(x)) || names[0];
   }
 
+  // Icons missing from the catalog are checked by reading the ::before content, which makes the browser restyle
+  // right away. Message buttons repeat the same few icons on every message, so a found icon is remembered.
+  const pseudoKnown = new Set();
   function fontGlyph(node) {
     if (!node?.classList) return null;
     const prefix = iconPrefix(node);
     const name = iconName(node.classList, prefix);
     if (!name) return null;
-    return catalogs[prefix]?.has(name) || pseudoGlyph(node) ? `${prefix} ${name}` : null;
+    const key = `${prefix} ${name}`;
+    if (catalogs[prefix]?.has(name) || pseudoKnown.has(key)) return key;
+    if (!pseudoGlyph(node)) return null;
+    pseudoKnown.add(key);
+    return key;
   }
 
   // Phosphor Regular 2.1.1 name:codepoint pairs (MIT).
@@ -2863,7 +2872,11 @@
       // 'theme' mode: leave the row/box shape alone and only reorder buttons. Ungroup left/right
       // into one row only when some button was moved to the other side.
       if (theme) {
-        const moved = buttons.some(item => item.side !== item.native);
+        // Ungrouping only works when the row is a flex row ([left] [textarea] [right]). Some themes lay the composer out
+        // as a grid on phones; there loose buttons would each take a grid cell and stack. Keep the groups and order the
+        // buttons inside them (a button set to the other side goes to the end/start of its own group).
+        const rowFlex = /flex/.test(host.getComputedStyle(common).display);
+        const moved = rowFlex && buttons.some(item => item.side !== item.native);
         const managed = moved ? buttons : buttons.filter(item => item.root === left || item.root === right);
         if (moved) {
           for (const root of [left, right]) set(root, { display: 'contents' });
@@ -3074,6 +3087,7 @@
   // Full comparison runs only after a DOM change; things that can change without one
   // (e.g. buttons hidden by theme CSS) are rechecked every few ticks.
   const POLL_BACKSTOP_TICKS = 5;
+  let pageCheckFrame = 0;
   function enablePolling() {
     if (pollingTimer || dead) return;
     if (!pollWatcher && host.MutationObserver && doc.body) {
@@ -3085,8 +3099,9 @@
           return !!target?.closest?.('.mes_text, .mes_reasoning');
         })) return;
         pollDirty = true;
-        homeController.ensure();   // Cheap: looks up the home panel only
-        topbarFold.check();
+        // Home widgets and top-bar fold follow the page once per frame (still before paint), not per mutation batch:
+        // streaming and animations deliver many batches a frame, each running a document query.
+        if (!pageCheckFrame) pageCheckFrame = host.requestAnimationFrame(() => { pageCheckFrame = 0; if (dead) return; homeController.ensure(); topbarFold.check(); });
         if (pollSoon || panel) return;
         for (const record of records) for (const node of record.addedNodes) {
           if (node.nodeType === 1 && (node.matches('.mes, .mes_buttons') || node.querySelector?.('.mes_buttons'))) {
@@ -5094,7 +5109,7 @@
     if (dead) return;
     dead = true;
     wandObserver?.disconnect();
-    host.clearTimeout(initTimer); host.clearTimeout(refreshTimer); host.clearTimeout(fontTimer); host.clearInterval(pollingTimer); host.clearTimeout(pollSoon); pollWatcher?.disconnect(); pollWatcher = null;
+    host.clearTimeout(initTimer); host.clearTimeout(refreshTimer); host.clearTimeout(fontTimer); host.clearInterval(pollingTimer); host.clearTimeout(pollSoon); host.cancelAnimationFrame?.(pageCheckFrame); pageCheckFrame = 0; pollWatcher?.disconnect(); pollWatcher = null;
     host.cancelAnimationFrame(wandFrame); host.clearTimeout(wandTimer); host.clearTimeout(messageTimer);
     wandFrame = 0; wandTimer = null; messageTimer = null;
     for (const timer of rowTimers) host.clearTimeout(timer);
