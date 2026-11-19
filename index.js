@@ -1,4 +1,4 @@
-/* ST Tailor 1.9.53 */
+/* ST Tailor 1.9.54 */
 (() => {
   'use strict';
   // The script build runs inside Tavern Helper's iframe, so the real page is the parent window; the extension build runs in that window directly.
@@ -6,7 +6,7 @@
   const doc = host.document;
   const GLOBAL = '__ST_TAILOR__';
   const STORAGE = 'st_tailor_v1';
-  const VERSION = "1.9.53";
+  const VERSION = "1.9.54";
   const IN_JSDOM = /jsdom/i.test(window.navigator?.userAgent || '');
   // Search only inside #chat, not the whole document: this runs on every DOM change, so keep it cheap.
   function welcomePanel() { return doc.getElementById('chat')?.getElementsByClassName('welcomePanel')[0] || null; }
@@ -869,7 +869,7 @@
   // order: sits above even decorations the theme draws at the start of the home (::before banners, etc.).
   const homeDefaults = () => ({
     clock: { enabled: false, label: 'NOW', font: '', size: 100, top: 20, bottom: 8, hour12: false, date: true, color: 'soft', customColor: '' },
-    hide: { version: false, links: false, temporary: false, settings: false, recent: false, assistant: false },
+    hide: { version: false, links: false, temporary: false, settings: false, recent: false, recentTitle: false, assistant: false },
     search: false,
     favorites: { enabled: false, style: 'circle' },
     place: 'inside',
@@ -1046,14 +1046,21 @@
       if (h.settings || h.recent) out.push('#chat .welcomePanel :is(.recentChatsSettings, .hideRecentChats, .showRecentChats)');
       // Also the theme's ::before/::after decorations on the header row; if the shortcuts are hidden too, hide the whole row.
       if (h.recent) out.push('#chat .welcomePanel :is(.recentChatsTitle, .welcomeRecent)', '#chat .welcomePanel .welcomeHeader::before', '#chat .welcomePanel .welcomeHeader::after');
-      if (h.recent && h.links && h.temporary) out.push('#chat .welcomePanel .welcomeHeader');
+      // Title only: the "Recent Chats" heading and the theme's decorations on the header row; the list stays.
+      if (h.recentTitle && !h.recent) out.push('#chat .welcomePanel .recentChatsTitle', '#chat .welcomePanel .welcomeHeader::before', '#chat .welcomePanel .welcomeHeader::after');
+      if ((h.recent || h.recentTitle) && h.links && h.temporary) out.push('#chat .welcomePanel .welcomeHeader');
       // The assistant's greeting/notice messages on the home (home screen only)
       if (h.assistant) out.push('#chat:has(> .welcomePanel) > .mes');
       if (h.links || h.temporary) out.push('#chat .welcomePanel .welcomeShortcuts > .welcomeShortcutsSeparator');
       if (h.links && h.temporary) out.push('#chat .welcomePanel .welcomeShortcuts');
-      // Keep the logo/version space: removing it pushes the manage buttons out of the position the theme set.
-      const keep = h.version ? '\n#chat .welcomePanel :is(.welcomeHeaderLogo, .welcomeHeaderVersionDisplay) { visibility: hidden !important; }' : '';
-      return keep + (out.length ? `\n${out.join(',\n')} { display: none !important; }` : '');
+      // Version row with nothing left in it (version and manage buttons all hidden): drop the whole row, not an empty gap.
+      const emptyTop = h.version && (h.settings || h.recent);
+      if (emptyTop) out.push('#chat .welcomePanel .welcomeHeaderTitle');
+      // Otherwise keep the logo/version space: removing it pushes the manage buttons out of the position the theme set.
+      const keep = h.version && !emptyTop ? '\n#chat .welcomePanel :is(.welcomeHeaderLogo, .welcomeHeaderVersionDisplay) { visibility: hidden !important; }' : '';
+      // Without the title, the line under the version row (themes draw it as that row's bottom border) separates nothing.
+      const line = h.recentTitle || h.recent ? '\n#chat .welcomePanel .welcomeHeaderTitle { border-bottom: 0 !important; }' : '';
+      return keep + line + (out.length ? `\n${out.join(',\n')} { display: none !important; }` : '');
     }
     function sync(next, fontConfig) {
       const d = homeDefaults();
@@ -1533,7 +1540,7 @@
       clock: { enabled: clock.enabled === true, label: typeof clock.label === 'string' ? cleanString(clock.label, 40) : 'NOW',
         font: clockFont, size: numberValue(clock.size, 50, 200) ?? 100, top: numberValue(clock.top, 0, 80) ?? 20, bottom: numberValue(clock.bottom, 0, 80) ?? 8, hour12: clock.hour12 === true, date: clock.date !== false,
         color: ['soft', 'body', 'custom'].includes(clock.color) ? clock.color : 'soft', customColor: colorValue(clock.customColor) },
-      hide: { version: hide.version === true, links: hide.links === true, temporary: hide.temporary === true, settings: hide.settings === true, recent: hide.recent === true, assistant: hide.assistant === true },
+      hide: { version: hide.version === true, links: hide.links === true, temporary: hide.temporary === true, settings: hide.settings === true, recent: hide.recent === true, recentTitle: hide.recentTitle === true, assistant: hide.assistant === true },
       search: home.search === true,
       favorites: { enabled: favs.enabled === true, style: favs.style === 'card' ? 'card' : 'circle' },
       place: home.place === 'above' ? 'above' : 'inside',
@@ -4269,7 +4276,11 @@
     recent.append(element('h3', {}, '최근 채팅 (Recent Chats)'));
     const [recentLeft, recentRight] = columns(recent);
     let syncCounts = () => {};
-    recentLeft.append(checkbox('최근 채팅 숨기기', home.hide.recent, value => { home.hide.recent = value; syncCounts(); preview(); }, tip('제목 · 목록 · 버튼 모두')));
+    recentLeft.append(checkbox('최근 채팅 숨기기', home.hide.recent, value => { home.hide.recent = value; syncTitle(); syncCounts(); preview(); }, tip('제목 · 목록 · 버튼 모두')));
+    const titleToggle = checkbox('제목 글자만 숨기기', home.hide.recentTitle, value => { home.hide.recentTitle = value; preview(); }, tip('Recent Chats 글자와 테마가 그 둘레에 넣은 꾸밈만 숨기고, 목록은 그대로'));
+    const syncTitle = () => { titleToggle.hidden = home.hide.recent; };
+    recentLeft.append(titleToggle);
+    syncTitle();
     if (recentSupported !== false && recentDraft) {
       const counts = element('div', { class: 'stt-recent-counts' });
       const settingsToggle = checkbox('설정(⚙) · 접기 버튼 숨기기', home.hide.settings, value => { home.hide.settings = value; syncCounts(); preview(); }, tip('숨기면 접기와 개수를 여기서 정합니다'));
