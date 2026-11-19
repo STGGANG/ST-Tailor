@@ -1,4 +1,4 @@
-/* ST Tailor 1.9.54 */
+/* ST Tailor 1.9.55 */
 (() => {
   'use strict';
   // The script build runs inside Tavern Helper's iframe, so the real page is the parent window; the extension build runs in that window directly.
@@ -6,7 +6,7 @@
   const doc = host.document;
   const GLOBAL = '__ST_TAILOR__';
   const STORAGE = 'st_tailor_v1';
-  const VERSION = "1.9.54";
+  const VERSION = "1.9.55";
   const IN_JSDOM = /jsdom/i.test(window.navigator?.userAgent || '');
   // Search only inside #chat, not the whole document: this runs on every DOM change, so keep it cheap.
   function welcomePanel() { return doc.getElementById('chat')?.getElementsByClassName('welcomePanel')[0] || null; }
@@ -1242,6 +1242,90 @@
   }
   const topbarFold = createTopbarFold();
 
+  // SillyTavern (dynamic-styles.js) copies every :hover rule without a focus counterpart into #dynamic-styles as a
+  // :focus-visible rule, once at startup. A theme switch or custom CSS edit replaces #custom-style but never removes
+  // the old theme's copies, and a copy keeps the rule's whole selector list ("x:checked, x:checked:hover" becomes
+  // "x:checked, x:checked:focus-visible"), so the old theme keeps styling checkboxes and top-bar icons until reload.
+  // This swaps the old theme's copies for the new theme's, leaving the page as a reload would.
+  const themeFocusCopies = (() => {
+    const PLACEHOLDER = ':__PLACEHOLDER__';
+    let watcher = null, watched = null, timer = null, lastText = null, lastCopies = null;
+
+    // Mirrors applyDynamicFocusStyles (naive comma split included) so the generated text matches what ST inserted.
+    function copiesOf(rules) {
+      const hoverRules = [], focusRules = new Set();
+      const signature = wrappers => wrappers.map(w => `${w.type}:${w.conditionText}`).join(';');
+      const walk = (list, wrappers) => {
+        for (const rule of list) {
+          if (host.CSSStyleRule && rule instanceof host.CSSStyleRule) {
+            for (const selector of rule.selectorText.split(',').map(s => s.trim())) {
+              const isHover = selector.includes(':hover'), isFocus = selector.includes(':focus');
+              if (isHover && isFocus) continue;
+              if (isHover) hoverRules.push({ base: selector.replace(/:hover/g, PLACEHOLDER).trim(), rule, wrappers });
+              else if (isFocus) focusRules.add(`${selector.replace(/:focus(-within|-visible)?/g, PLACEHOLDER).trim()}|${signature(wrappers)}`);
+            }
+          } else if (host.CSSMediaRule && rule instanceof host.CSSMediaRule) walk(rule.cssRules, [...wrappers, { type: 'media', conditionText: rule.conditionText }]);
+          else if (host.CSSSupportsRule && rule instanceof host.CSSSupportsRule) walk(rule.cssRules, [...wrappers, { type: 'supports', conditionText: rule.conditionText }]);
+          else if (host.CSSContainerRule && rule instanceof host.CSSContainerRule) walk(rule.cssRules, [...wrappers, { type: 'container', conditionText: rule.conditionText }]);
+        }
+      };
+      walk(rules, []);
+      const out = [];
+      for (const { base, rule, wrappers } of hoverRules) {
+        if (focusRules.has(`${base}|${signature(wrappers)}`)) continue;
+        const selector = rule.selectorText.replace(/:hover/g, ':focus-visible');
+        if (selector.includes('::')) continue;
+        out.push(wrappers.reduceRight((inner, w) => `@${w.type} ${w.conditionText} { ${inner} }`, `${selector} { ${rule.style.cssText} }`));
+      }
+      return out;
+    }
+    // The browser's own serialisation, so the texts compare equal to the rules already in #dynamic-styles.
+    function normalized(texts) {
+      const sheet = new host.CSSStyleSheet();
+      for (const text of texts) { try { sheet.insertRule(text, sheet.cssRules.length); } catch { /* ST failed on it too */ } }
+      return [...sheet.cssRules].map(rule => rule.cssText);
+    }
+    function parsed(text) {
+      const sheet = new host.CSSStyleSheet();
+      try { sheet.replaceSync(text.replace(/@import\s[^;]*;/g, '')); } catch { return []; }
+      return sheet.cssRules;
+    }
+    function swap() {
+      timer = null;
+      const style = doc.getElementById('custom-style');
+      const target = doc.getElementById('dynamic-styles')?.sheet;
+      if (!style || !target || style.textContent === lastText) return;
+      let rules;
+      try { rules = style.sheet?.cssRules; } catch { return; }
+      if (!rules) return;
+      const stale = new Map();
+      for (const text of lastCopies || normalized(copiesOf(parsed(lastText || '')))) stale.set(text, (stale.get(text) || 0) + 1);
+      for (let i = target.cssRules.length - 1; i >= 0; i--) {
+        const text = target.cssRules[i].cssText, count = stale.get(text);
+        if (!count) continue;
+        target.deleteRule(i);
+        stale.set(text, count - 1);
+      }
+      lastCopies = normalized(copiesOf(rules));
+      for (const text of lastCopies) { try { target.insertRule(text, target.cssRules.length); } catch { /* skip */ } }
+      lastText = style.textContent;
+    }
+    return {
+      // Called at start and on every poll tick: attaches once #custom-style exists (or after ST replaces it).
+      watch() {
+        if (!host.MutationObserver || !host.CSSStyleSheet || typeof host.CSSStyleSheet.prototype.replaceSync !== 'function') return;
+        const style = doc.getElementById('custom-style');
+        if (!style || style === watched) return;
+        watcher?.disconnect();
+        watched = style;
+        if (lastText === null) lastText = style.textContent;
+        watcher = new host.MutationObserver(() => { host.clearTimeout(timer); timer = host.setTimeout(swap, 120); });
+        watcher.observe(style, { childList: true, characterData: true, subtree: true });
+        if (style.textContent !== lastText) { host.clearTimeout(timer); timer = host.setTimeout(swap, 0); }
+      },
+      dispose() { watcher?.disconnect(); watcher = null; watched = null; host.clearTimeout(timer); timer = null; },
+    };
+  })();
   // Input placeholder: default = SillyTavern's own; hide = empty; custom = replace only the connected text (the no-connection text stays).
   // SillyTavern copies the textarea's connected_text / no_connection_text attributes into placeholder whenever the connection changes, so edit those attributes.
   const inputTextDefaults = () => ({ mode: 'default', text: '' });
@@ -3124,6 +3208,7 @@
   }
   function pollTick() {
     if (doc.hidden || dead) return;
+    themeFocusCopies.watch();
     if (!panel) inputTextController.sync(appliedSettings().inputText);
     if (layoutMobileState !== null && mobileLayout() !== layoutMobileState && !panel) { refresh(false); return; }
     beginPass();
@@ -5132,6 +5217,7 @@
     fontController.dispose();
     homeController.dispose();
     topbarFold.dispose();
+    themeFocusCopies.dispose();
     inputTextController.dispose();
     koLocaleController.dispose();
     rollback();
@@ -5212,6 +5298,7 @@
       wandTimer = host.setTimeout(runWandCheck, 120);
     });
     installEntryPoints(); refresh();
+    themeFocusCopies.watch();
     const layoutQuery = host.matchMedia?.(MOBILE_LAYOUT_QUERY);
     if (layoutQuery?.addEventListener) {
       const onLayoutQuery = () => schedule();
