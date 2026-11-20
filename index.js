@@ -1,4 +1,4 @@
-/* ST Tailor 1.9.55 */
+/* ST Tailor 1.9.56 */
 (() => {
   'use strict';
   // The script build runs inside Tavern Helper's iframe, so the real page is the parent window; the extension build runs in that window directly.
@@ -6,7 +6,7 @@
   const doc = host.document;
   const GLOBAL = '__ST_TAILOR__';
   const STORAGE = 'st_tailor_v1';
-  const VERSION = "1.9.55";
+  const VERSION = "1.9.56";
   const IN_JSDOM = /jsdom/i.test(window.navigator?.userAgent || '');
   // Search only inside #chat, not the whole document: this runs on every DOM change, so keep it cheap.
   function welcomePanel() { return doc.getElementById('chat')?.getElementsByClassName('welcomePanel')[0] || null; }
@@ -3719,7 +3719,6 @@
       item('fa-solid fa-angles-up', '맨 위로', () => withUndo(`‘${name}’ 맨 위로 옮김`, () => reorder(record.key, order.find(k => k !== record.key))), at <= 0);
       item('fa-solid fa-angles-down', '맨 아래로', () => withUndo(`‘${name}’ 맨 아래로 옮김`, () => reorder(record.key, null)), at === order.length - 1);
     }
-    if (!record.protected) item(config.hidden ? 'fa-solid fa-eye' : 'fa-solid fa-eye-slash', config.hidden ? '다시 보이기' : '숨기기', () => withUndo(`‘${name}’ ${config.hidden ? '다시 보임' : '숨김'}`, () => { patchItem(record.key, { hidden: !config.hidden }); if (record.key === selectedKey) renderDetail(); }));
     item('fa-solid fa-rotate-left', '설정 원래대로', () => withUndo(`‘${name}’ 설정을 원래대로`, () => { delete draft.areas[selectedArea].items[record.key]; renderList(); }), !Object.keys(config).length);
     menu.sttAnchor = anchor;
     panel.append(menu);
