@@ -1,4 +1,4 @@
-/* ST Tailor 1.9.59 */
+/* ST Tailor 1.9.60 */
 (() => {
   'use strict';
   // The script build runs inside Tavern Helper's iframe, so the real page is the parent window; the extension build runs in that window directly.
@@ -6,7 +6,7 @@
   const doc = host.document;
   const GLOBAL = '__ST_TAILOR__';
   const STORAGE = 'st_tailor_v1';
-  const VERSION = "1.9.59";
+  const VERSION = "1.9.60";
   const IN_JSDOM = /jsdom/i.test(window.navigator?.userAgent || '');
   // Search only inside #chat, not the whole document: this runs on every DOM change, so keep it cheap.
   function welcomePanel() { return doc.getElementById('chat')?.getElementsByClassName('welcomePanel')[0] || null; }
@@ -369,6 +369,8 @@
   };
   const FONT_GROUPS = ['ui', 'chat'];
   const FONT_LIMITS = { size: [70, 160], lineHeight: [70, 200], stroke: [0, 8], spacing: [-10, 20], fade: [0, 80] };
+  // Partial fonts often mix in a typeface drawn much smaller (handwriting fonts), which needs more than 160% to match the text.
+  const MARK_LIMITS = { ...FONT_LIMITS, size: [70, 250] };
   // stroke / spacing: null = keep the theme's (stroke 0 also removes any stroke the theme added)
   // langLook: per-language size (both groups) and stroke/spacing (message text only, applied by wrapping that language's runs).
   const langLookDefault = () => ({ size: 100, stroke: null, spacing: null });
@@ -1595,7 +1597,7 @@
       .filter(f => f && f.name && f.css && !seen.has(f.name) && seen.add(f.name)).slice(0, MAX_CUSTOM_FONTS);
     const validFamily = value => typeof value === 'string' && (Object.prototype.hasOwnProperty.call(FONT_FACES, value) || (value.startsWith(CUSTOM_PREFIX) && seen.has(value.slice(CUSTOM_PREFIX.length)))) ? value : '';
     const rawMarks = Array.isArray(fonts.marks) ? fonts.marks.filter(isRecord) : [];
-    const markLook = m => ({ family: validFamily(m.family), size: numberValue(m.size, ...FONT_LIMITS.size) ?? 100,
+    const markLook = m => ({ family: validFamily(m.family), size: numberValue(m.size, ...MARK_LIMITS.size) ?? 100,
       stroke: numberValue(m.stroke, ...FONT_LIMITS.stroke) ?? null, spacing: numberValue(m.spacing, ...FONT_LIMITS.spacing) ?? null, fade: numberValue(m.fade, ...FONT_LIMITS.fade) ?? 0 });
     const markIds = new Set();
     result.fonts.marks = [
@@ -1776,7 +1778,9 @@
   // Typing (numbers, labels) and colour dragging refresh the page once the input pauses, not on every keystroke.
   let previewLaterTimer = 0;
   const previewLater = (ms = 250) => { host.clearTimeout(previewLaterTimer); previewLaterTimer = host.setTimeout(() => { previewLaterTimer = 0; if (draft) previewDraft(); }, ms); };
-  const previewDraft = () => { if (!draft) return; const e = effective(draft); fontController.sync(e.fonts); homeController.sync(e.home, e.fonts); topbarFold.sync(e.topbarFold); inputTextController.sync(e.inputText); };
+  // Fonts are left out on purpose: rewriting the page's font style on every change was laggy (web fonts, catch-all
+  // rules), so fonts reach the page only on save and the panel's own preview box shows them meanwhile.
+  const previewDraft = () => { if (!draft) return; const e = effective(draft); homeController.sync(e.home, e.fonts); topbarFold.sync(e.topbarFold); inputTextController.sync(e.inputText); };
   const editableSettings = () => draft || saved;
   const element = (tag, attrs = {}, text = '') => {
     const node = doc.createElement(tag);
@@ -3509,7 +3513,7 @@
       collect(everything || !!panel);
       applyIconStyle(liveSettings().iconStyle);
       const live = liveSettings();
-      fontController.sync(live.fonts);
+      fontController.sync(appliedSettings().fonts);
       homeController.sync(live.home, live.fonts);
       topbarFold.sync(live.topbarFold);
       inputTextController.sync(live.inputText);
@@ -4565,8 +4569,8 @@
     const previewSoon = () => { if (previewTimer) return; previewTimer = host.setTimeout(() => { previewTimer = 0; if (draft) preview(); }, 80); };
     let typedTimer = 0;
     const previewTyped = () => { host.clearTimeout(typedTimer); typedTimer = host.setTimeout(() => { typedTimer = 0; if (draft) preview(); }, 250); };
-    const slider = (config, key, label, title, changed = () => {}) => {
-      const [min, max] = FONT_LIMITS[key];
+    const slider = (config, key, label, title, changed = () => {}, limits = FONT_LIMITS) => {
+      const [min, max] = limits[key];
       const fallback = { ...markStyle(), ...fontDefaults() }[key];
       const row = element('div', { class: 'stt-font-slider' });
       // Wide ranges move in steps on the slider (size · line height · fade 5%); the number box still takes any value.
@@ -4683,7 +4687,7 @@
         sliders?.remove(); sliders = null;
         if (open) {
           sliders = element('div', { class: 'stt-font-mark-adjust' });
-          for (const [key, title] of [['size', '크기'], ['stroke', '굵기'], ['spacing', '자간'], ['fade', '투명도']]) sliders.append(slider(mark, key, title, label, showTuned));
+          for (const [key, title] of [['size', '크기'], ['stroke', '굵기'], ['spacing', '자간'], ['fade', '투명도']]) sliders.append(slider(mark, key, title, label, showTuned, MARK_LIMITS));
           row.after(sliders);
         }
         adjust.setAttribute('aria-expanded', String(open));
@@ -5051,6 +5055,10 @@
   function previewFonts() {
     const fonts = effective(draft).fonts;
     const [lang, , paragraphs] = PREVIEW_SAMPLES[previewLang];
+    // The page keeps the saved fonts until save, so load whatever the draft picks for this box.
+    for (const id of new Set([fonts.ui.family, fonts.chat.family, fonts.ui.langs?.[lang], fonts.chat.langs?.[lang], ...fonts.marks.filter(markUsed).map(m => m.family)])) {
+      if (id && (id.startsWith(CUSTOM_PREFIX) ? fonts.custom.some(f => CUSTOM_PREFIX + f.name === id) : FONT_FACES[id])) ensureSampleFont(id);
+    }
     // Theme fonts measured with our fonts off, so a changed UI font doesn't bleed into the chat sample.
     const theme = fontController.themeFamilies();
     const themeChat = theme.chatFamily, themeUi = theme.uiFamily;
@@ -5490,7 +5498,7 @@
           const themeVersion = iconThemeVersion;
           iconThemeKey();
           if (themeVersion === iconThemeVersion && faceSignatureNow() === faceSignature && !wandDrifted() && sameSnapshot(snapshotSources(), sourceSnapshot)) {
-            fontController.sync(liveSettings().fonts);
+            fontController.sync(appliedSettings().fonts);
             return;
           }
         } catch { /* fall through to a full refresh */ }
@@ -5506,7 +5514,7 @@
     const MESSAGE_EVENTS = new Set(['USER_MESSAGE_RENDERED', 'CHARACTER_MESSAGE_RENDERED', 'MESSAGE_SWIPED', 'GENERATION_STARTED', 'GENERATION_ENDED']);
     for (const name of ['APP_READY', 'CHAT_CHANGED', 'USER_MESSAGE_RENDERED', 'CHARACTER_MESSAGE_RENDERED', 'MESSAGE_SWIPED', 'SETTINGS_UPDATED', 'GENERATION_STARTED', 'GENERATION_ENDED']) {
       const type = ctx.event_types?.[name];
-      const handler = MESSAGE_EVENTS.has(name) ? () => { refreshMessages(); fontController.sync(liveSettings().fonts); }
+      const handler = MESSAGE_EVENTS.has(name) ? () => { refreshMessages(); fontController.sync(appliedSettings().fonts); }
         : name === 'CHAT_CHANGED' || name === 'APP_READY'
           ? () => { settleUntil = Math.max(settleUntil, Date.now() + SETTLE_ENTRY_MS); schedule(); }
           : onSettingsUpdated;
