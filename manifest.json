@@ -3,7 +3,7 @@
     "loading_order": 100,
     "js": "index.js",
     "author": "STGGANG",
-    "version": "1.9.58",
+    "version": "1.9.59",
     "description": "홈 화면 위젯, 상단바·마법봉·입력창·QR바·메시지 버튼 순서·아이콘·숨기기, 언어별·부분 글꼴",
     "auto_update": false,
     "homePage": "https://github.com/STGGANG/ST-Tailor"
